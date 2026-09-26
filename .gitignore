@@ -3,6 +3,9 @@ backend/venv/
 __pycache__/
 *.pyc
 
+# SQLite 本地开发临时库（连不上 MySQL 时的备用文件）
+backend/instance/
+
 # Node
 frontend/node_modules/
 frontend/dist/
