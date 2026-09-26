@@ -17,3 +17,6 @@ frontend/dist/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 建库时多套的一层嵌套目录（内含独立的 .git 仓库，切勿提交；待 C 清理）
+/FuturePath/
