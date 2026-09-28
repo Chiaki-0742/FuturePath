@@ -1,0 +1,70 @@
+### ============================================================
+### FuturePath 第一周 · 任务4：接口逐项测试（对应手册6项表）
+### 用法：每个 "###" 请求块上方会有 "Send Request" 文字链接，
+###       点它就发送，响应显示在右侧。
+### 注意：username 用 steven01（zhangsan 昨天已注册过，
+###       会直接返回 1003 走不全流程）
+### ============================================================
+
+### 【变量】测完第③步后，把登录返回的 token 粘贴到等号后面
+@token =d7a477ad2601991ea6c9762b5eabdf7c
+
+### ① 注册（期望 code:0，msg:"注册成功"，data 里有 token）
+###    如果返回 1003 说明之前已经注册过，跳过①②直接从③继续
+POST http://127.0.0.1:5000/api/register
+Content-Type: application/json
+
+{
+  "username": "steven01",
+  "password": "123456",
+  "name": "张三",
+  "major": "计算机科学与技术",
+  "grade": "大一"
+}
+
+### ② 重复注册（和①一模一样，期望 code:1003 "用户名已存在"）
+###    操作：再点一次①的 Send Request 也行，或点这里的 Send Request
+POST http://127.0.0.1:5000/api/register
+Content-Type: application/json
+
+{
+  "username": "steven01",
+  "password": "123456",
+  "name": "张三",
+  "major": "计算机科学与技术",
+  "grade": "大一"
+}
+
+### ③ 登录（期望 code:0，返回 token）
+###    ★ 把返回的 token 复制，粘贴到本文件顶部的 @token = 后面，保存
+POST http://127.0.0.1:5000/api/login
+Content-Type: application/json
+
+{
+  "username": "steven01",
+  "password": "123456"
+}
+
+### ④ 密码错误（密码改成 111111，期望 code:1004 "用户名或密码错误"）
+POST http://127.0.0.1:5000/api/login
+Content-Type: application/json
+
+{
+  "username": "steven01",
+  "password": "111111"
+}
+
+### ⑤ 查用户信息（期望 code:0，返回张三完整信息）
+###    前提：已把③的 token 粘贴到顶部 @token 变量并保存
+GET http://127.0.0.1:5000/api/me
+Authorization: Bearer {{token}}
+
+### ⑥ 查数据库（这条不在 VS Code 发，去终端操作）：
+###    1. 新开一个终端，输入:  mysql -u root -p
+###    2. 输入你的 MySQL 密码（FuturePath2026）
+###    3. 依次执行:
+###       USE planning_db;
+###       SELECT id, username, name, major, grade, password_hash FROM users;
+###    期望：看到 steven01，且 password_hash 是 scrypt:32768... 开头的一长串
+###    ★ 注意：手册写的表名是 user，咱们的表名是 users（多了个 s）
+###    ★ password_hash 是乱码 = 加密成功 = D2 验收通过！
