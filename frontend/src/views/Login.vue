@@ -8,11 +8,19 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
+const formRef = ref(null)
+
 const form = reactive({
   // 从注册页跳过来时会带上用户名，直接预填
   username: typeof route.query.username === 'string' ? route.query.username : '',
   password: '',
 })
+
+// 校验规则：错误提示会自动显示在输入框正下方
+const rules = {
+  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+}
 
 const loading = ref(false)
 const error = ref('')
@@ -20,15 +28,17 @@ const error = ref('')
 async function handleSubmit() {
   error.value = ''
 
-  if (!form.username || !form.password) {
-    error.value = '请填写用户名和密码'
+  // 校验不通过就停下（红字已经显示出来了）
+  try {
+    await formRef.value.validate()
+  } catch {
     return
   }
 
   loading.value = true
   try {
     await userStore.doLogin({
-      username: form.username,
+      username: form.username.trim(),
       password: form.password,
     })
 
@@ -49,43 +59,52 @@ async function handleSubmit() {
     <p class="page__subtitle">登录后查看你的个人规划</p>
 
     <div class="card">
-      <div v-if="error" class="alert alert--error">{{ error }}</div>
-
-      <div v-if="USE_MOCK" class="alert alert--info">
-        当前是本地 Mock 模式，可直接用测试账号登录：<br />
-        用户名 <strong>test</strong>　密码 <strong>123456</strong>
+      <div v-if="error" class="form-msgs">
+        <el-alert :title="error" type="error" :closable="false" show-icon />
       </div>
 
-      <form novalidate @submit.prevent="handleSubmit">
-        <div class="field">
-          <label class="field__label" for="username">用户名</label>
-          <input
+      <div v-if="USE_MOCK" class="form-msgs">
+        <el-alert type="info" :closable="false" show-icon>
+          <template #title>
+            当前是本地 Mock 模式，可直接用测试账号登录：用户名
+            <strong>test</strong>　密码 <strong>123456</strong>
+          </template>
+        </el-alert>
+      </div>
+
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        label-position="top"
+        require-asterisk-position="right"
+        @submit.prevent="handleSubmit"
+      >
+        <el-form-item label="用户名" prop="username">
+          <el-input
             id="username"
-            v-model.trim="form.username"
-            class="input"
-            type="text"
+            v-model="form.username"
             placeholder="请输入用户名"
             autocomplete="username"
           />
-        </div>
+        </el-form-item>
 
-        <div class="field">
-          <label class="field__label" for="password">密码</label>
-          <input
+        <el-form-item label="密码" prop="password">
+          <el-input
             id="password"
             v-model="form.password"
-            class="input"
             type="password"
             placeholder="请输入密码"
             autocomplete="current-password"
+            show-password
+            @keyup.enter="handleSubmit"
           />
-        </div>
+        </el-form-item>
 
-        <button class="btn btn--primary btn--block" type="submit" :disabled="loading">
-          <span v-if="loading" class="spinner"></span>
+        <el-button class="btn-submit" type="primary" native-type="submit" :loading="loading">
           {{ loading ? '登录中…' : '登录' }}
-        </button>
-      </form>
+        </el-button>
+      </el-form>
 
       <p class="switch-line">
         还没有账号？<RouterLink to="/register">去注册</RouterLink>

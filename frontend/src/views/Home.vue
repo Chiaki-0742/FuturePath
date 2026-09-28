@@ -26,6 +26,9 @@ onMounted(load)
   <div class="page">
     <h1 class="page__title">
       你好，{{ userStore.userInfo?.username || '同学' }}
+      <el-tag v-if="userStore.userInfo?.grade" class="title-tag" effect="light" round>
+        {{ userStore.userInfo.grade }}
+      </el-tag>
     </h1>
     <p class="page__subtitle">这里是你的个人主页</p>
 
@@ -149,17 +152,38 @@ onMounted(load)
 }
 
 .tile {
-  padding: 16px 18px;
-  border: 1px solid var(--border);
+  padding: 18px;
+  border: 1px solid #e9edf4;
   border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: 0 1px 2px rgba(28, 36, 48, 0.03);
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+}
+
+/* 鼠标划过时轻轻抬起来，让页面不那么"死" */
+.tile:hover {
+  transform: translateY(-3px);
+  border-color: #d5e0f7;
+  box-shadow: 0 2px 6px rgba(28, 36, 48, 0.05),
+    0 14px 30px -20px rgba(47, 107, 255, 0.6);
 }
 
 .tile__year {
-  margin: 0 0 6px;
+  display: inline-block;
+  margin: 0 0 10px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--primary-weak);
   font-size: 12px;
   font-weight: 500;
   color: var(--primary);
+  letter-spacing: 0.02em;
+}
+
+.title-tag {
+  margin-left: 8px;
+  vertical-align: middle;
+  font-weight: 400;
 }
 
 .tile__title {

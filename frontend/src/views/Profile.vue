@@ -3,14 +3,14 @@ import { onMounted, reactive, ref } from 'vue'
 import { useUserStore } from '@/stores/user'
 
 const userStore = useUserStore()
+const formRef = ref(null)
 
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const success = ref('')
 
-// 字段严格对齐约定表里 GET /api/me 的返回：
-//   {username, name, major, grade}
+// 字段对标后端 GET /api/me 的返回：{username, name, major, grade}
 // 表里没有 email / phone，所以这两个输入框已经拿掉了 ——
 // 留着它们会让人以为能存，实际后端根本不认，属于"假功能"。
 const form = reactive({
@@ -20,6 +20,28 @@ const form = reactive({
 })
 
 const gradeOptions = ['大一', '大二', '大三', '大四', '研究生']
+
+// 校验规则：错误提示会自动显示在输入框正下方
+const rules = {
+  name: [
+    { required: true, message: '请输入姓名', trigger: 'blur' },
+    { validator: notBlank, message: '请输入姓名', trigger: 'blur' },
+  ],
+  major: [
+    { required: true, message: '请输入专业', trigger: 'blur' },
+    { validator: notBlank, message: '请输入专业', trigger: 'blur' },
+  ],
+  grade: [{ required: true, message: '请选择年级', trigger: 'change' }],
+}
+
+/** 自定义校验：不能只填空格（required 拦不住 "   " 这种） */
+function notBlank(rule, value, callback) {
+  if (!String(value ?? '').trim()) {
+    callback(new Error(rule.message))
+  } else {
+    callback()
+  }
+}
 
 function fillForm(user) {
   form.name = user.name || ''
@@ -44,12 +66,10 @@ async function handleSave() {
   error.value = ''
   success.value = ''
 
-  if (!form.name.trim()) {
-    error.value = '姓名不能为空'
-    return
-  }
-  if (!form.major.trim()) {
-    error.value = '专业不能为空'
+  // 校验不通过就停下（红字已经显示出来了）
+  try {
+    await formRef.value.validate()
+  } catch {
     return
   }
 
@@ -77,66 +97,50 @@ onMounted(load)
     <p class="page__subtitle">管理你的账号资料</p>
 
     <div class="card">
-      <div v-if="error" class="alert alert--error">{{ error }}</div>
-      <div v-if="success" class="alert alert--success">{{ success }}</div>
+      <div v-if="error || success" class="form-msgs">
+        <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+        <el-alert v-if="success" :title="success" type="success" :closable="false" show-icon />
+      </div>
 
       <div v-if="loading" class="muted">正在加载…</div>
 
       <template v-else>
-        <div class="field">
-          <label class="field__label">用户名</label>
-          <input
-            class="input"
-            type="text"
-            :value="userStore.userInfo?.username || ''"
-            disabled
-          />
-          <p class="field__hint">用户名不可修改</p>
-        </div>
+        <el-form
+          ref="formRef"
+          :model="form"
+          :rules="rules"
+          label-position="top"
+          require-asterisk-position="right"
+          @submit.prevent="handleSave"
+        >
+          <el-form-item label="用户名">
+            <el-input :model-value="userStore.userInfo?.username || ''" disabled />
+            <p class="field__hint">用户名不可修改</p>
+          </el-form-item>
 
-        <form novalidate @submit.prevent="handleSave">
-          <div class="field">
-            <label class="field__label" for="name">姓名</label>
-            <input
+          <el-form-item label="姓名" prop="name">
+            <el-input
               id="name"
-              v-model.trim="form.name"
-              class="input"
-              type="text"
+              v-model="form.name"
               placeholder="你的真实姓名或称呼"
               autocomplete="name"
             />
-          </div>
+          </el-form-item>
 
-          <div class="field">
-            <label class="field__label" for="major">专业</label>
-            <input
-              id="major"
-              v-model.trim="form.major"
-              class="input"
-              type="text"
-              placeholder="如：计算机科学与技术"
-            />
-          </div>
+          <el-form-item label="专业" prop="major">
+            <el-input id="major" v-model="form.major" placeholder="如：计算机科学与技术" />
+          </el-form-item>
 
-          <div class="field">
-            <label class="field__label" for="grade">年级</label>
-            <select id="grade" v-model="form.grade" class="input">
-              <option value="">请选择</option>
-              <option v-for="g in gradeOptions" :key="g" :value="g">
-                {{ g }}
-              </option>
-            </select>
-          </div>
+          <el-form-item label="年级" prop="grade">
+            <el-select v-model="form.grade" placeholder="请选择年级">
+              <el-option v-for="g in gradeOptions" :key="g" :label="g" :value="g" />
+            </el-select>
+          </el-form-item>
 
-          <button
-            class="btn btn--primary btn--block"
-            type="submit"
-            :disabled="saving"
-          >
-            <span v-if="saving" class="spinner"></span>
+          <el-button class="btn-submit" type="primary" native-type="submit" :loading="saving">
             {{ saving ? '保存中…' : '保存修改' }}
-          </button>
-        </form>
+          </el-button>
+        </el-form>
       </template>
     </div>
   </div>
@@ -144,14 +148,11 @@ onMounted(load)
 
 <style scoped>
 .field__hint {
+  /* width:100% 是为了让它从输入框旁边换行到下一行 */
+  width: 100%;
   margin: 6px 0 0;
   font-size: 12px;
   color: var(--text-3);
-}
-
-.input:disabled {
-  background: #f7f8fa;
-  color: var(--text-3);
-  cursor: not-allowed;
+  line-height: 1.5;
 }
 </style>

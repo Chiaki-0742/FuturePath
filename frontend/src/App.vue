@@ -25,7 +25,10 @@ onMounted(() => {
   <div class="app">
     <header class="topbar">
       <div class="topbar__inner">
-        <RouterLink to="/" class="brand">大学生未来规划</RouterLink>
+        <RouterLink to="/" class="brand">
+          <span class="brand__dot"></span>
+          大学生未来规划
+        </RouterLink>
 
         <nav class="nav">
           <template v-if="isLoggedIn">
@@ -49,7 +52,7 @@ onMounted(() => {
     </main>
 
     <footer class="footer">
-      Vue 3 + Vite 前端骨架 · 后端接口对接中
+      Vue 3 + Vite + Element Plus · 后端接口对接中
     </footer>
   </div>
 </template>
@@ -62,8 +65,12 @@ onMounted(() => {
 }
 
 .topbar {
-  background: #fff;
+  /* 半透明 + 毛玻璃：滚动时内容从底下透出来，比一条死白更透气 */
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
   border-bottom: 1px solid var(--border);
+  box-shadow: 0 6px 20px -18px rgba(28, 36, 48, 0.5);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -81,9 +88,20 @@ onMounted(() => {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
+}
+
+.brand__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2f6bff, #6d97ff);
+  box-shadow: 0 0 0 4px rgba(47, 107, 255, 0.12);
 }
 
 .brand:hover {
@@ -111,14 +129,20 @@ onMounted(() => {
   font-weight: 500;
 }
 
-.nav__link--cta {
+/* ⚠️ 这里必须写成 .nav__link.nav__link--cta（连着两个类），
+   不能只写 .nav__link--cta。因为上面那条 .nav__link.router-link-exact-active
+   的优先级更高（两个类 > 一个类），在 /register 页面上「注册」按钮正好命中它，
+   文字颜色会被改成 --primary —— 而按钮底色也是 --primary，
+   白字就这么"消失"了，看起来像一个没有文字的空按钮。 */
+.nav__link.nav__link--cta {
   padding: 6px 14px;
   border-radius: var(--radius-sm);
   background: var(--primary);
   color: #fff;
 }
 
-.nav__link--cta:hover {
+.nav__link.nav__link--cta:hover,
+.nav__link.nav__link--cta.router-link-exact-active {
   background: var(--primary-dark);
   color: #fff;
 }

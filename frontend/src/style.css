@@ -21,8 +21,48 @@
   --success: #17936d;
   --success-weak: #eaf7f2;
 
-  --radius: 12px;
-  --radius-sm: 8px;
+  /* 卡片圆角：12 → 16，视觉上更柔和 */
+  --radius: 16px;
+  --radius-sm: 10px;
+
+  /* ==========================================================
+     Element Plus 主题定制
+     组件库默认是它自己的蓝（#409eff），这里换成项目主色，
+     这样"自己写的按钮"和"组件库的按钮"颜色才一致。
+     ========================================================== */
+  --el-color-primary: #2f6bff;
+  --el-color-primary-light-3: #6d97ff;
+  --el-color-primary-light-5: #99b6ff;
+  --el-color-primary-light-7: #c5d5ff;
+  --el-color-primary-light-8: #dae4ff;
+  --el-color-primary-light-9: #eff4ff;
+  --el-color-primary-dark-2: #1f52d0;
+
+  --el-color-success: #17936d;
+  --el-color-warning: #d98817;
+  --el-color-danger: #d64545;
+  --el-color-error: #d64545;
+
+  --el-text-color-primary: #1c2430;
+  --el-text-color-regular: #5a6472;
+  --el-text-color-secondary: #939cab;
+  --el-text-color-placeholder: #a8b0bd;
+
+  --el-border-color: #e4e7ec;
+  --el-border-color-light: #ebeff5;
+  --el-border-color-lighter: #f2f4f8;
+  --el-border-color-hover: #cfd5de;
+
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 8px;
+
+  /* 输入框高度：组件库默认 32px，网页上偏矮，统一抬到 44px */
+  --el-component-size: 44px;
+  --el-component-size-small: 34px;
+  --el-component-size-large: 48px;
+
+  --el-font-size-base: 14px;
+  --el-box-shadow-light: 0 8px 24px -12px rgba(28, 36, 48, 0.18);
 }
 
 html,
@@ -33,7 +73,16 @@ body,
 
 body {
   margin: 0;
-  background: var(--bg);
+  /* 页面背景：纯色太"平"，顶部加一层很淡的主色晕染，往下过渡回浅灰 */
+  background-color: var(--bg);
+  background-image: radial-gradient(
+      900px 420px at 50% -180px,
+      #dde7ff 0%,
+      rgba(221, 231, 255, 0) 70%
+    ),
+    linear-gradient(180deg, #f7f8fb 0%, #f1f3f7 100%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   color: var(--text);
   font: 14px/1.6 system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei',
     sans-serif;
@@ -83,9 +132,12 @@ h3 {
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid #e9edf4;
   border-radius: var(--radius);
-  padding: 24px;
+  padding: 28px;
+  /* 卡片从「一圈灰边」换成「淡淡的投影」，层次更清楚 */
+  box-shadow: 0 1px 2px rgba(28, 36, 48, 0.04),
+    0 12px 32px -18px rgba(28, 36, 48, 0.28);
 }
 
 .card + .card {
@@ -103,59 +155,80 @@ h3 {
   margin: 0 0 20px;
 }
 
-/* ---------------- 表单 ---------------- */
+/* ---------------- 表单（Element Plus）----------------
+   组件库负责「结构 + 校验」，这里只调外观：
+   标签、输入框，以及最要紧的 —— 输入框下方那行红字。
+   ---------------------------------------------------- */
 
-.field {
-  margin-bottom: 18px;
+.el-form-item {
+  margin-bottom: 20px;
 }
 
-.field__label {
-  display: block;
+.el-form-item__label {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-2);
-  margin-bottom: 6px;
+  line-height: 1.5;
+  padding-bottom: 6px !important;
 }
 
-.field__label .req {
-  color: var(--danger);
-  margin-left: 2px;
-}
-
-.input {
-  width: 100%;
-  padding: 10px 12px;
-  font-size: 14px;
-  font-family: inherit;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.input::placeholder {
-  color: var(--text-3);
-}
-
-.input:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-weak);
-}
-
-.input--error {
-  border-color: var(--danger);
-}
-
-.input--error:focus {
-  box-shadow: 0 0 0 3px var(--danger-weak);
-}
-
-.field__error {
-  color: var(--danger);
+/* 错误提示：紧贴在输入框正下方，飘红字 */
+.el-form-item__error {
   font-size: 12px;
+  line-height: 1.5;
+  padding-top: 3px;
+}
+
+/* 输入框：边框与聚焦光圈对齐项目主色 */
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border-strong) inset;
+  transition: box-shadow 0.15s;
+}
+
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px #b9c2cf inset;
+}
+
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--primary) inset, 0 0 0 3px var(--primary-weak);
+}
+
+/* 校验不通过时组件库会自动加 is-error，这里让边框变红 */
+.el-form-item.is-error .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--danger) inset;
+}
+
+.el-form-item.is-error .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--danger) inset, 0 0 0 3px var(--danger-weak);
+}
+
+/* 下拉框撑满整行 */
+.el-form-item .el-select {
+  width: 100%;
+}
+
+/* 表单里那个整行大按钮 */
+.btn-submit {
+  width: 100%;
+  height: 46px;
   margin-top: 6px;
+  font-size: 15px;
+  border-radius: var(--radius-sm);
+}
+
+/* 页面顶部的一叠提示（成功 / 失败） */
+.form-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.el-alert {
+  border-radius: var(--radius-sm);
 }
 
 /* ---------------- 按钮 ---------------- */

@@ -6,10 +6,11 @@ import { useUserStore } from '@/stores/user'
 const router = useRouter()
 const userStore = useUserStore()
 
-// 字段对齐 C 的《数据库对接说明》第 2 节的 user 表：
-//   {username, password, name, major, grade}
+// el-form 的实例。校验要通过它：formRef.value.validate()
+const formRef = ref(null)
+
+// 字段对齐后端 users 表：{username, password, name, major, grade}
 // 表里没有 email / phone，所以页面上也不收这两项。
-// 姓名是必填 —— 文档第 5 节的注册接口校验写着"用户名、密码、姓名不能为空"。
 const form = reactive({
   username: '',
   password: '',
@@ -18,101 +19,115 @@ const form = reactive({
   major: '',
   grade: '大一',
 })
-const fieldErrors = reactive({
-  username: '',
-  password: '',
-  confirm: '',
-  name: '',
-  major: '',
-  grade: '',
-})
 
 const gradeOptions = ['大一', '大二', '大三', '大四', '研究生']
+
+/**
+ * 校验规则 —— 这就是任务②要的 rules。
+ * 每条规则里的 message，会由 el-form 自动显示在对应输入框的正下方（飘红字）。
+ *
+ *   required   必须填
+ *   min / max  长度
+ *   pattern    正则
+ *   validator  自定义校验函数（比如"两次密码要一致"）
+ *   trigger    什么时候触发检查：blur = 光标离开输入框时
+ *
+ * ⚠️ 前端校验只是让体验好一点，不是安全保证 ——
+ *    用户随时能在浏览器里改掉这些代码，所以后端必须再校验一遍。
+ */
+const rules = {
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { validator: notBlank, message: '请输入用户名', trigger: 'blur' },
+    {
+      // ⚠️ 必须和后端 app/routes/auth.py 里的校验保持一致：
+      //    后端写的是 3 <= len(username) <= 20 且 username.isalnum()
+      //    isalnum() 只认字母和数字 —— 下划线是不允许的。
+      //    前端如果还按"允许下划线"放行，用户填了 stu_2026 会在后端吃 1001，
+      //    看着像"两边都没错但就是不通"。
+      pattern: /^[a-zA-Z0-9]{3,20}$/,
+      message: '3~20 位，只能用字母或数字',
+      trigger: 'blur',
+    },
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, max: 20, message: '密码长度需为 6~20 位', trigger: 'blur' },
+  ],
+  confirm: [
+    { required: true, message: '请再输入一次密码', trigger: 'blur' },
+    { validator: checkConfirm, trigger: 'blur' },
+  ],
+  name: [
+    { required: true, message: '请输入姓名', trigger: 'blur' },
+    { validator: notBlank, message: '请输入姓名', trigger: 'blur' },
+    { max: 20, message: '姓名不要超过 20 个字', trigger: 'blur' },
+  ],
+  major: [
+    { required: true, message: '请输入专业', trigger: 'blur' },
+    { validator: notBlank, message: '请输入专业', trigger: 'blur' },
+  ],
+  grade: [{ required: true, message: '请选择年级', trigger: 'change' }],
+}
+
+/** 自定义校验：两次密码必须一致 */
+function checkConfirm(rule, value, callback) {
+  if (value !== form.password) {
+    callback(new Error('两次输入的密码不一致'))
+  } else {
+    callback()
+  }
+}
+
+/** 自定义校验：不能只填空格（required 拦不住 "   " 这种） */
+function notBlank(rule, value, callback) {
+  if (!String(value ?? '').trim()) {
+    callback(new Error(rule.message))
+  } else {
+    callback()
+  }
+}
 
 const loading = ref(false)
 const error = ref('')
 const success = ref('')
 
-/**
- * 前端校验。
- * 注意：前端校验只是"体验好"，绝不能当成安全保证 ——
- * 后端必须再校验一遍，因为前端代码用户随时能在浏览器里改掉。
- * （C 的文档里 1001 = 参数缺失或格式错误，就是后端那道防线）
- */
-function validate() {
-  fieldErrors.username = ''
-  fieldErrors.password = ''
-  fieldErrors.confirm = ''
-  fieldErrors.name = ''
-  fieldErrors.major = ''
-  fieldErrors.grade = ''
-
-  if (!form.username) {
-    fieldErrors.username = '请输入用户名'
-  } else if (!/^[a-zA-Z0-9_]{4,16}$/.test(form.username)) {
-    fieldErrors.username = '4~16 位，只能用字母、数字、下划线'
-  }
-
-  if (!form.password) {
-    fieldErrors.password = '请输入密码'
-  } else if (form.password.length < 6 || form.password.length > 20) {
-    fieldErrors.password = '密码长度需为 6~20 位'
-  }
-
-  if (!form.confirm) {
-    fieldErrors.confirm = '请再输入一次密码'
-  } else if (form.confirm !== form.password) {
-    fieldErrors.confirm = '两次输入的密码不一致'
-  }
-
-  if (!form.name.trim()) {
-    fieldErrors.name = '请输入姓名'
-  } else if (form.name.trim().length > 20) {
-    fieldErrors.name = '姓名不要超过 20 个字'
-  }
-
-  if (!form.major.trim()) {
-    fieldErrors.major = '请输入专业'
-  }
-
-  if (!form.grade) {
-    fieldErrors.grade = '请选择年级'
-  }
-
-  return Object.keys(fieldErrors).every((key) => !fieldErrors[key])
-}
-
 async function handleSubmit() {
   error.value = ''
   success.value = ''
-  if (!validate()) return
+
+  // 校验不通过就停下 —— 红字已经由 el-form 自动显示在输入框下方了
+  try {
+    await formRef.value.validate()
+  } catch {
+    return
+  }
 
   loading.value = true
   try {
     const data = await userStore.doRegister({
-      username: form.username,
+      username: form.username.trim(),
       password: form.password,
       name: form.name.trim(),
       major: form.major.trim(),
       grade: form.grade,
     })
 
-    // 注册接口的返回，两份文档不一致（旧约定表 {token}、新文档 null），
-    // 所以这里两可处理：有 token 说明后端顺手把我们登录了，直接进首页；
-    // 没有 token 就跳登录页，并把用户名带过去帮用户预填。
+    // 后端目前是返回 {token} 的（注册即登录）。
+    // 万一某个实现没返回 token，就退回「跳登录页，把用户名带过去预填」。
     if (data && data.token) {
-      success.value = '注册成功，已为你自动登录…'
+      success.value = '注册成功，正在进入首页…'
       setTimeout(() => {
         router.push({ name: 'home' })
       }, 800)
     } else {
       success.value = '注册成功，正在跳转到登录页…'
       setTimeout(() => {
-        router.push({ name: 'login', query: { username: form.username } })
+        router.push({ name: 'login', query: { username: form.username.trim() } })
       }, 800)
     }
   } catch (e) {
-    // 这里的 e.message 来自后端（或 mock），比如"用户名已存在"
+    // e.message 来自后端（或 mock），比如"用户名已存在"
     error.value = e.message || '注册失败，请稍后重试'
   } finally {
     loading.value = false
@@ -126,124 +141,79 @@ async function handleSubmit() {
     <p class="page__subtitle">注册后可以保存你的规划结果</p>
 
     <div class="card">
-      <div v-if="error" class="alert alert--error">{{ error }}</div>
-      <div v-if="success" class="alert alert--success">{{ success }}</div>
+      <div v-if="error || success" class="form-msgs">
+        <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+        <el-alert v-if="success" :title="success" type="success" :closable="false" show-icon />
+      </div>
 
-      <!-- @submit.prevent 必须加：不加的话浏览器会刷新页面，
-           请求看着就像"没发出去" -->
-      <form novalidate @submit.prevent="handleSubmit">
-        <div class="field">
-          <label class="field__label" for="username">
-            用户名<span class="req">*</span>
-          </label>
-          <input
+      <!-- @submit.prevent 必须加：不加的话浏览器会刷新页面，请求看着就像"没发出去" -->
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        label-position="top"
+        require-asterisk-position="right"
+        @submit.prevent="handleSubmit"
+      >
+        <el-form-item label="用户名" prop="username">
+          <el-input
             id="username"
-            v-model.trim="form.username"
-            class="input"
-            :class="{ 'input--error': fieldErrors.username }"
-            type="text"
-            placeholder="4~16 位字母、数字或下划线"
+            v-model="form.username"
+            placeholder="3~20 位字母或数字"
             autocomplete="username"
           />
-          <p v-if="fieldErrors.username" class="field__error">
-            {{ fieldErrors.username }}
-          </p>
-        </div>
+        </el-form-item>
 
-        <div class="field">
-          <label class="field__label" for="password">
-            密码<span class="req">*</span>
-          </label>
-          <input
+        <el-form-item label="密码" prop="password">
+          <el-input
             id="password"
             v-model="form.password"
-            class="input"
-            :class="{ 'input--error': fieldErrors.password }"
             type="password"
             placeholder="6~20 位"
             autocomplete="new-password"
+            show-password
           />
-          <p v-if="fieldErrors.password" class="field__error">
-            {{ fieldErrors.password }}
-          </p>
-        </div>
+        </el-form-item>
 
-        <div class="field">
-          <label class="field__label" for="confirm">
-            确认密码<span class="req">*</span>
-          </label>
-          <input
+        <el-form-item label="确认密码" prop="confirm">
+          <el-input
             id="confirm"
             v-model="form.confirm"
-            class="input"
-            :class="{ 'input--error': fieldErrors.confirm }"
             type="password"
             placeholder="再输入一次"
             autocomplete="new-password"
+            show-password
           />
-          <p v-if="fieldErrors.confirm" class="field__error">
-            {{ fieldErrors.confirm }}
-          </p>
-        </div>
+        </el-form-item>
 
-        <div class="field">
-          <label class="field__label" for="name">
-            姓名<span class="req">*</span>
-          </label>
-          <input
+        <el-form-item label="姓名" prop="name">
+          <el-input
             id="name"
-            v-model.trim="form.name"
-            class="input"
-            :class="{ 'input--error': fieldErrors.name }"
-            type="text"
+            v-model="form.name"
             placeholder="你的真实姓名或称呼"
             autocomplete="name"
           />
-          <p v-if="fieldErrors.name" class="field__error">
-            {{ fieldErrors.name }}
-          </p>
-        </div>
+        </el-form-item>
 
-        <div class="field">
-          <label class="field__label" for="major">
-            专业<span class="req">*</span>
-          </label>
-          <input
-            id="major"
-            v-model.trim="form.major"
-            class="input"
-            :class="{ 'input--error': fieldErrors.major }"
-            type="text"
-            placeholder="如：计算机科学与技术"
-          />
-          <p v-if="fieldErrors.major" class="field__error">
-            {{ fieldErrors.major }}
-          </p>
-        </div>
+        <el-form-item label="专业" prop="major">
+          <el-input id="major" v-model="form.major" placeholder="如：计算机科学与技术" />
+        </el-form-item>
 
-        <div class="field">
-          <label class="field__label" for="grade">
-            年级<span class="req">*</span>
-          </label>
-          <select
-            id="grade"
-            v-model="form.grade"
-            class="input"
-            :class="{ 'input--error': fieldErrors.grade }"
-          >
-            <option value="">请选择</option>
-            <option v-for="g in gradeOptions" :key="g" :value="g">{{ g }}</option>
-          </select>
-          <p v-if="fieldErrors.grade" class="field__error">
-            {{ fieldErrors.grade }}
-          </p>
-        </div>
+        <el-form-item label="年级" prop="grade">
+          <el-select v-model="form.grade" placeholder="请选择年级">
+            <el-option v-for="g in gradeOptions" :key="g" :label="g" :value="g" />
+          </el-select>
+        </el-form-item>
 
-        <button class="btn btn--primary btn--block" type="submit" :disabled="loading">
-          <span v-if="loading" class="spinner"></span>
+        <el-button
+          class="btn-submit"
+          type="primary"
+          native-type="submit"
+          :loading="loading"
+        >
           {{ loading ? '注册中…' : '注册' }}
-        </button>
-      </form>
+        </el-button>
+      </el-form>
 
       <p class="switch-line">
         已经有账号了？<RouterLink to="/login">去登录</RouterLink>

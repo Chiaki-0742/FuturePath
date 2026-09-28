@@ -177,22 +177,32 @@ function bail(title, lines) {
   await send('Page.enable')
 
   const goto = async (hash, wait) => {
-    await send('Page.navigate', { url: APP_URL + '/#' + hash })
+    // ⚠️ 地址后面加的 ?r=时间戳 是有用的，不能删：
+    //    如果两次都导航到同一个地址，浏览器不会真的重新加载，
+    //    上一条用例在表单里填的内容就会残留下来，
+    //    导致下一条用例"清空某项"这种断言假失败。
+    const url = APP_URL + '/?r=' + Date.now() + '#' + hash
+    await send('Page.navigate', { url })
     await sleep(wait || 2600)
   }
   const bodyText = async () =>
     ((await evaluate('document.body.innerText')) || '').replace(/\s+/g, ' ')
   const currentHash = () => evaluate('location.hash')
 
+  // 填表。要兼容两种写法：
+  //   原生 <input>             → 直接就是它自己
+  //   Element Plus 的 el-input → id 可能落在外面那层 div 上，得往里再找一层
   const fill = (pairs) => {
     const lines = pairs
       .map((p) => 'set(' + JSON.stringify(p[0]) + ', ' + JSON.stringify(p[1]) + ');')
       .join('\n    ')
     return evaluate(
       '(() => {\n' +
+        '  const isField = (el) => !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)\n' +
         '  const set = (sel, val) => {\n' +
-        '    const el = document.querySelector(sel)\n' +
-        '    if (!el) return\n' +
+        '    let el = document.querySelector(sel)\n' +
+        '    if (el && !isField(el)) el = el.querySelector("input, textarea, select")\n' +
+        '    if (!isField(el)) return\n' +
         '    el.value = val\n' +
         '    el.dispatchEvent(new Event("input", { bubbles: true }))\n' +
         '    el.dispatchEvent(new Event("change", { bubbles: true }))\n' +
@@ -202,7 +212,40 @@ function bail(title, lines) {
     )
   }
 
-  const submit = () => evaluate('document.querySelector("button[type=submit]").click()')
+  const submit = async () => {
+    await evaluate('document.querySelector("button[type=submit]").click()')
+    // Element Plus 的校验是异步的，点完要等一下红字才会出来
+    await sleep(700)
+  }
+
+  // 读取某个输入框当前的值（兼容原生 input 和 el-input 两层结构）
+  const fieldValue = async (sel) =>
+    (await evaluate(
+      '(() => {\n' +
+        '  var el = document.querySelector(' + JSON.stringify(sel) + ')\n' +
+        '  if (!el) return null\n' +
+        '  if (!/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) el = el.querySelector("input, textarea, select")\n' +
+        '  return el ? el.value : null\n' +
+        '})()'
+    )) || ''
+
+  // 抓取"显示在输入框正下方的那行红字"
+  const fieldErrors = async () =>
+    (await evaluate(
+      'Array.from(document.querySelectorAll(".el-form-item__error")).map(function (e) { return e.innerText.trim() })'
+    )) || []
+
+  // 抓第一行红字的实际颜色（用来验证"飘红字"这件事真的发生了，不是靠猜）
+  const firstErrorColor = async () =>
+    (await evaluate(
+      '(() => { var e = document.querySelector(".el-form-item__error"); return e ? getComputedStyle(e).color : "" })()'
+    )) || ''
+
+  // 判断颜色是不是红色系：红通道明显大于绿、蓝通道
+  const isRedColor = (c) => {
+    const m = String(c).match(/[\d.]+/g)
+    return !!m && Number(m[0]) > 150 && Number(m[0]) > Number(m[1]) + 60
+  }
 
   // 把登录状态清掉再进下一个用例。
   // 必须做，否则路由守卫会把"已登录"的人从 /login、/register 直接送回首页，
@@ -242,7 +285,8 @@ function bail(title, lines) {
     ['#confirm', 'abc123'],
     ['#name', '自检同学'],
     ['#major', '计算机科学与技术'],
-    ['#grade', '大一'],
+    // 年级不填：下拉框已经有默认值"大一"。
+    // 而且 Element Plus 的 el-select 不是原生 <select>，直接赋值它是收不到的。
   ])
   await submit()
   await sleep(2600)
@@ -263,12 +307,38 @@ function bail(title, lines) {
     ['#confirm', 'xyz999'],
     ['#name', '自检同学'],
     ['#major', '计算机科学与技术'],
-    ['#grade', '大一'],
   ])
   await submit()
   await sleep(900)
   text = await bodyText()
+
+  // 这两项是任务②（表单校验升级）的验收点
+  const errs = await fieldErrors()
+  console.log('   输入框下方的红字:', JSON.stringify(errs))
+  check(errs.includes('两次输入的密码不一致'), '校验提示显示在输入框下方（不是弹窗）')
+  const errColor = await firstErrorColor()
+  check(isRedColor(errColor), '提示文字是红色的（实测 ' + errColor + '）')
+
   check(text.includes('两次输入的密码不一致'), '前端校验拦住了不一致的密码')
+
+  // ---------- 2-b. 必填校验（rules 里的 required） ----------
+  section('【2-b】注册：用户名留空')
+  await logout()
+  await goto('/register')
+  await fill([
+    ['#password', 'abc123'],
+    ['#confirm', 'abc123'],
+    ['#name', '自检同学'],
+    ['#major', '计算机科学与技术'],
+  ])
+  await submit()
+  await sleep(700)
+  const errsRequired = await fieldErrors()
+  const usernameNow = await fieldValue('#username')
+  console.log('   提交时用户名输入框的值:', JSON.stringify(usernameNow))
+  console.log('   输入框下方的红字:', JSON.stringify(errsRequired))
+  check(usernameNow === '', '前置条件：用户名输入框确实是空的')
+  check(errsRequired.includes('请输入用户名'), '必填项留空时，提示出现在对应输入框下方')
 
   // ---------- 3. 后端错误展示 ----------
   section('【3】注册：用户名已存在')
@@ -280,7 +350,6 @@ function bail(title, lines) {
     ['#confirm', '123456'],
     ['#name', '重名同学'],
     ['#major', '软件工程'],
-    ['#grade', '大二'],
   ])
   await submit()
   await sleep(2200)
