@@ -398,32 +398,76 @@ const bail = (title, lines) => {
   check(text.includes('用户名或密码错误'), '后端返回的「用户名或密码错误」显示在页面上')
   check((await currentHash()) !== '#/', '没有误放行进入首页')
 
-  // ---------- 8. 已知缺口探测（不计入成败） ----------
-  section('【8】补充探测：个人中心的「保存修改」有接口吗')
-  let putStatus = 0
-  let putBody = ''
+  // ---------- 8. 个人中心「保存修改」真的能存进后端吗 ----------
+  // 2026-09-29 升级：A 补上 PUT /api/me 之后，这里从"探测接口在不在"
+  // 改成"真的在页面上改一遍再点保存"。只探测接口存在是不够的 ——
+  // 接口在、但页面按钮点不通或者字段对不上，照样是坏的。
+  section('【8】个人中心改资料 -> 点「保存修改」-> 后端真的变了吗')
+  // 第 7 项为了测错密码把 token 清了，这里先重新登录
+  await goto('/login')
+  await fill([
+    ['#username', username],
+    ['#password', password],
+  ])
+  await submit()
+  await sleep(3400)
+
+  const newName = '改过的名字'
+  const newMajor = '计算机科学与技术'
+
+  await goto('/profile')
+  await sleep(2200)
+  await fill([
+    ['#name', newName],
+    ['#major', newMajor],
+  ])
+
+  // 点「保存修改」。el-button 渲染出来就是 <button>，
+  // 文案会在「保存修改」和「保存中…」之间切换，两个都匹配。
+  const clickedSave = await evaluate(
+    '(() => {\n' +
+      '  const b = Array.from(document.querySelectorAll("button")).find(function (x) {\n' +
+      '    const t = (x.innerText || "").trim()\n' +
+      '    return t === "保存修改" || t === "保存中…"\n' +
+      '  })\n' +
+      '  if (b) b.click()\n' +
+      '  return !!b\n' +
+      '})()'
+  )
+  await sleep(2200)
+
+  const saveText = await bodyText()
+  check(clickedSave === true, '找到了「保存修改」按钮并点了它')
+  check(saveText.includes('保存成功'), '页面显示了「保存成功」的提示')
+
+  // 不信页面提示，直接问后端是不是真的写进去了
+  let meAfter = null
   try {
     const r = await fetch(API_URL + '/api/me', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-      body: JSON.stringify({ name: realname, major, grade: '大一' }),
+      headers: { Authorization: 'Bearer ' + (await getToken()) },
       signal: AbortSignal.timeout(6000),
     })
-    putStatus = r.status
-    putBody = (await r.text()).slice(0, 120)
-  } catch (e) {
-    putBody = String(e && e.message)
-  }
+    meAfter = await r.json()
+  } catch {}
+  console.log('   改完后端返回:', meAfter ? JSON.stringify(meAfter.data) : '(拿不到)')
+  check(
+    !!meAfter && meAfter.code === 0 && meAfter.data.name === newName,
+    '后端 /api/me 里的姓名真的变成了「' + newName + '」'
+  )
+  check(
+    !!meAfter && meAfter.data.major === newMajor,
+    '后端 /api/me 里的专业真的变成了「' + newMajor + '」'
+  )
 
-  console.log('   PUT /api/me -> HTTP ' + (putStatus || '(连不上)'))
-  if (putStatus === 405) {
-    note('后端还没有 PUT /api/me —— 个人中心的「保存修改」在真后端下会失败（HTTP 405）。')
-    note('这是同学 A 要补的接口，补上后本脚本这一项会自动变绿。')
-  } else if (putStatus === 200) {
-    note('PUT /api/me 已经存在了（HTTP 200），个人中心的「保存修改」可以正常用。')
-  } else {
-    note('PUT /api/me 返回 HTTP ' + putStatus + '：' + putBody.replace(/\s+/g, ' '))
-  }
+  // 再整页刷新一次，看后端存的值能不能重新读回来（闭环）
+  await goto('/profile')
+  await sleep(2200)
+  const profileAfterSave = await profileFields()
+  console.log('   刷新后表单里的值:', JSON.stringify(profileAfterSave))
+  check(
+    !!profileAfterSave && profileAfterSave.name === newName,
+    '刷新页面后显示的还是改后的姓名（数据确实落库了）'
+  )
 
   // ---------- 汇总 ----------
   section('汇总')
