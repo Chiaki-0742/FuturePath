@@ -59,6 +59,33 @@ Content-Type: application/json
 GET http://127.0.0.1:5000/api/me
 Authorization: Bearer {{token}}
 
+### ⑦ 修改个人资料（新增接口，个人中心「保存修改」用）
+###    期望：code:0，msg:"保存成功"，data 里是改后的新资料
+###    前提：顶部 @token 是有效 token
+PUT http://127.0.0.1:5000/api/me
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "张三丰",
+  "major": "软件工程",
+  "grade": "大二"
+}
+
+### ⑧ 改完再查一次（验证真的改进去了，不是假成功）
+###    期望：code:0，返回的 name 是"张三丰"、major 是"软件工程"
+GET http://127.0.0.1:5000/api/me
+Authorization: Bearer {{token}}
+
+### ⑨ 不带 token 改资料（权限测试）
+###    期望：code:401 "未登录或登录过期"
+PUT http://127.0.0.1:5000/api/me
+Content-Type: application/json
+
+{
+  "name": "黑客"
+}
+
 ### ⑥ 查数据库（这条不在 VS Code 发，去终端操作）：
 ###    1. 新开一个终端，输入:  mysql -u root -p
 ###    2. 输入你的 MySQL 密码（FuturePath2026）

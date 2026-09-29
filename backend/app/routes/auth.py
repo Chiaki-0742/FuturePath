@@ -17,6 +17,18 @@ def fail(code, msg):
     return jsonify({"code": code, "msg": msg, "data": {}})
 
 
+def current_user():
+    """从请求头 Authorization: Bearer <token> 里认人。
+    认得出来就返回 User 对象，认不出来返回 None（调用方自行决定怎么报错）。
+    为什么抽成函数？因为 GET /api/me 和 PUT /api/me 都要用同一套逻辑，
+    抽出来以后只维护一份代码。
+    """
+    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+    if not token or token not in TOKENS:
+        return None
+    return User.query.filter_by(username=TOKENS[token]).first()
+
+
 @auth_bp.post("/register")
 def register():
     body = request.get_json(silent=True) or {}
@@ -66,12 +78,34 @@ def login():
 
 @auth_bp.get("/me")
 def me():
-    # 401 未登录 / 登录过期：请求头 Authorization: Bearer <token>
-    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
-    if not token or token not in TOKENS:
-        return fail(401, "未登录或登录过期")
-
-    user = User.query.filter_by(username=TOKENS[token]).first()
+    # 401 未登录 / 登录过期
+    user = current_user()
     if not user:
         return fail(401, "未登录或登录过期")
     return jsonify({"code": 0, "msg": "success", "data": user.to_dict()})
+
+
+@auth_bp.put("/me")
+def update_me():
+    """修改个人资料（个人中心「保存修改」调用）。
+    只允许改 name / major / grade —— username 是账号、密码另有流程，
+    都从入参里彻底忽略，防止前端（或恶意请求）越权改账号。
+    """
+    user = current_user()
+    if not user:
+        return fail(401, "未登录或登录过期")
+
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return fail(1001, "姓名不能为空")
+
+    user.name = name
+    # 没传的字段保持原值（只改用户真正填了的），空字符串视为"清空"→ 存默认值
+    if "major" in body:
+        user.major = (body.get("major") or "").strip() or "未填写"
+    if "grade" in body:
+        user.grade = str(body.get("grade") or "").strip() or "未填写"
+
+    db.session.commit()
+    return jsonify({"code": 0, "msg": "保存成功", "data": user.to_dict()})
