@@ -7,7 +7,8 @@
 ### ============================================================
 
 ### 【变量】测完第③步后，把登录返回的 token 粘贴到等号后面
-@token =d7a477ad2601991ea6c9762b5eabdf7c
+### ⚠️ 不要把真实 token 提交上来（这个仓库是 public）
+@token =
 
 ### ① 注册（期望 code:0，msg:"注册成功"，data 里有 token）
 ###    如果返回 1003 说明之前已经注册过，跳过①②直接从③继续
@@ -88,7 +89,7 @@ Content-Type: application/json
 
 ### ⑥ 查数据库（这条不在 VS Code 发，去终端操作）：
 ###    1. 新开一个终端，输入:  mysql -u root -p
-###    2. 输入你的 MySQL 密码（FuturePath2026）
+###    2. 输入你的 MySQL 密码（密码问 C 要，**不要写在这个文件里** —— 这是公开仓库）
 ###    3. 依次执行:
 ###       USE planning_db;
 ###       SELECT id, username, name, major, grade, password_hash FROM users;
