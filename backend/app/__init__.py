@@ -32,6 +32,21 @@ def create_app():
             "data": {"service": "FuturePath API", "status": "running"},
         })
 
+    # 全局兜底：任何未被代码捕获的异常（数据库断连、代码 bug 等）
+    # 都会落到这里，返回统一的 JSON 格式，而不是 Flask 默认的 HTML 报错页。
+    # 这样前端拦截器能读到 msg，用户看到的是人话提示而不是白屏乱码。
+    # 注意：开发时 debug=True 会显示调试页面，这个 handler 只在
+    # 生产模式（debug=False，正式部署时）才真正生效。
+    @app.errorhandler(500)
+    def internal_error(e):
+        # 手动回滚：出错时这次操作的数据不完整，回滚防止"半截数据"留在会话里
+        db.session.rollback()
+        return jsonify({
+            "code": 5000,
+            "msg": "服务器内部错误，请检查数据库连接",
+            "data": {},
+        }), 500
+
     # 开发期便利：启动时自动建表（生产环境会换成迁移方案）
     with app.app_context():
         from app.models.user import User  # noqa: F401 确保模型已注册
