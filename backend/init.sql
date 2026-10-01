@@ -449,3 +449,5 @@ ORDER BY s.order_no;
 --    删掉 backend/.env 即可，后端会自动用 backend/instance/dev.db。
 --    但那种情况下本脚本不用执行。
 
+USE futurepath;
+SELECT * FROM users;
