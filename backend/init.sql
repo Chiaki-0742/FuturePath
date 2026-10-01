@@ -291,7 +291,3 @@ SELECT COUNT(*) AS 案例数 FROM `cases`;         -- 现在 2，补完后应为
 SELECT CASE WHEN COUNT(*) = 6 THEN '✅ 6 张表都建好了' ELSE '❌ 表数量不对' END AS 建表检查
 FROM information_schema.tables WHERE table_schema = 'futurepath';
 
-USE futurepath;
-SHOW TABLES;
-SELECT COUNT(*) AS 题库题数 FROM questions;
-SELECT COUNT(*) AS 案例数 FROM cases;
