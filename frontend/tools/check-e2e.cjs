@@ -255,6 +255,59 @@ function bail(title, lines) {
     await sleep(150)
   }
 
+  // ---- 问卷页专用 ----
+  //
+  // 问卷三屏是"都在 DOM 里、只显示一屏"（v-show），
+  // 所以找选项时必须先筛掉看不见的那两屏，
+  // 否则会点到隐藏屏里的同名选项上（比如三屏里都有"都没有"就乱了）。
+  // offsetParent 为 null 就是被 display:none 藏起来的元素。
+  const clickOption = async (label) => {
+    const found = await evaluate(
+      '(() => {\n' +
+        '  var items = []\n' +
+        '  Array.from(document.querySelectorAll(".el-form-item"))\n' +
+        '    .filter(function (el) { return el.offsetParent !== null })\n' +
+        '    .forEach(function (item) {\n' +
+        '      Array.from(item.querySelectorAll(".el-radio, .el-checkbox")).forEach(function (x) { items.push(x) })\n' +
+        '    })\n' +
+        '  var target = items.find(function (el) { return el.innerText.replace(/\\s+/g, "") === ' +
+        JSON.stringify(label) +
+        ' })\n' +
+        '  if (!target) return false\n' +
+        '  target.click()\n' +
+        '  return true\n' +
+        '})()'
+    )
+    await sleep(160)
+    return found
+  }
+
+  // 按文字点一个可见的按钮（"下一步""提交问卷"这类）
+  const clickButton = async (label) => {
+    const found = await evaluate(
+      '(() => {\n' +
+        '  var btns = Array.from(document.querySelectorAll("button")).filter(function (b) {\n' +
+        '    return b.offsetParent !== null && b.innerText.replace(/\\s+/g, "") === ' +
+        JSON.stringify(label) +
+        ' })\n' +
+        '  if (!btns.length) return false\n' +
+        '  btns[0].click()\n' +
+        '  return true\n' +
+        '})()'
+    )
+    await sleep(600)
+    return found
+  }
+
+  // 读首页那张「你的方向」卡片上的大字。
+  // ⚠️ 不能直接用 bodyText().includes("考研") 判断 —— 首页下面
+  //    "大学四年，这样安排"那张卡片里本来就写着"保研、考研、就业、留学"，
+  //    那样写的话不管有没有填问卷都会"通过"，等于没测。
+  const directionOnHome = async () =>
+    (await evaluate(
+      '(() => { var el = document.querySelector(".direction"); return el ? el.innerText.trim() : "" })()'
+    )) || ''
+
   const APP_MARKER = '登录后查看你的个人规划' // 登录页上的一句固定文案，用来判断页面到底渲染出来没有
 
   const seed = Date.now().toString().slice(-6)
@@ -277,7 +330,7 @@ function bail(title, lines) {
   console.log('   OK  页面已正常渲染')
 
   // ---------- 1. 注册 ----------
-  section('【1】注册：填表 -> 提交')
+  section('【1】注册：填表 -> 提交 -> 自动进入问卷')
   await goto('/register')
   await fill([
     ['#username', 'e2e' + seed],
@@ -293,9 +346,56 @@ function bail(title, lines) {
   let text = await bodyText()
   let hash = await currentHash()
   console.log('   跳转后:', hash)
-  // 约定表里注册接口返回 data:{token}，所以正常情况注册完就已经是登录状态了
-  check(hash === '#/', '注册成功后自动登录并进入首页')
-  check(text.includes('你好，e2e' + seed), '注册后首页显示新账号')
+  // 2026-10-02 起：新用户注册成功后不再直接进首页，而是被带去填问卷（新手引导）
+  check(hash === '#/survey', '注册成功后自动进入问卷页')
+  check(text.includes('第 1 步 / 共 3 步'), '问卷页显示当前在第几步（进度）')
+  check(text.includes('未来方向'), '问卷第一屏是「未来方向」')
+
+  // ---------- 1-b. 问卷：没选就点"下一步"，必须被拦下 ----------
+  section('【1-b】问卷：题目没选就点「下一步」')
+  await clickButton('下一步')
+  text = await bodyText()
+  hash = await currentHash()
+  const surveyErrs = await fieldErrors()
+  console.log('   当前:', hash, ' 红字:', JSON.stringify(surveyErrs))
+  check(hash === '#/survey', '没有被放过去，还停在问卷页')
+  check(text.includes('第 1 步 / 共 3 步'), '仍然显示第 1 步')
+  check(surveyErrs.length > 0, '没答的题目下方出现提示（说明校验真的生效了）')
+
+  // ---------- 1-c. 问卷：三屏逐屏填完 -> 提交 ----------
+  section('【1-c】问卷：三屏填完 -> 提交 -> 首页显示方向')
+  check(await clickOption('考研'), '第 1 屏选中「考研」')
+  await clickButton('下一步')
+  text = await bodyText()
+  check(text.includes('第 2 步 / 共 3 步'), '进入第 2 屏（当前现状）')
+
+  // B 组 6 题：年级 / 专业 / 学校 / 成绩 / 英语 / 经历（多选）
+  const statusPicks = ['大三', '理工类', '普通一本', '前30%', '已过六级', '实习']
+  let pickedAll = true
+  for (const opt of statusPicks) {
+    const ok = await clickOption(opt)
+    if (!ok) {
+      pickedAll = false
+      console.log('   ⚠️ 页面上没找到这个选项:', opt)
+    }
+  }
+  check(pickedAll, '第 2 屏 6 道题都选上了')
+
+  await clickButton('下一步')
+  text = await bodyText()
+  check(text.includes('第 3 步 / 共 3 步'), '进入第 3 屏（想了解什么）')
+
+  check(await clickOption('具体怎么准备'), '第 3 屏选中一个想了解的问题')
+  await clickButton('提交问卷')
+  await sleep(2600)
+  hash = await currentHash()
+  text = await bodyText()
+  console.log('   提交后跳转到:', hash)
+  check(hash === '#/', '提交后进入首页')
+  check(text.includes('你的方向'), '首页出现「你的方向」卡片')
+  const dir = await directionOnHome()
+  console.log('   首页上显示的方向:', JSON.stringify(dir))
+  check(dir === '考研', '首页显示的方向就是问卷里选的那个')
 
   // ---------- 2. 前端校验 ----------
   section('【2】注册：两次密码不一致')
@@ -357,8 +457,15 @@ function bail(title, lines) {
   check(text.includes('用户名已存在'), '后端返回的错误正确显示到页面上')
 
   // ---------- 4. 登录 ----------
-  section('【4】登录：test / 123456')
+  section('【4】登录：test / 123456（已填过问卷的老用户）')
   await logout()
+  // 给 test 预置一份问卷记录，模拟"早就填过问卷的人"。
+  // 不预置的话，登录后会先被新手引导带去问卷页，这条用例会误报成失败。
+  await evaluate(
+    'localStorage.setItem("plan_survey_test", JSON.stringify({' +
+      'direction:"考研",grade:"大一",status:{major_type:"理工类"},' +
+      'interest:["具体怎么准备"],extra_note:"",created_at:"2026-10-01T00:00:00.000Z"}))'
+  )
   await goto('/login')
   await fill([
     ['#username', 'test'],
@@ -369,10 +476,11 @@ function bail(title, lines) {
   text = await bodyText()
   hash = await currentHash()
   console.log('   登录后跳转到:', hash)
-  check(hash === '#/', '登录成功后进入首页')
+  check(hash === '#/', '填过问卷的老用户直接进首页（不再被拦去问卷）')
   check(text.includes('你好，test'), '首页显示当前用户名')
   check(text.includes('账号信息'), '用户资料通过接口加载成功')
   check(text.includes('测试同学'), '资料字段按约定渲染（姓名）')
+  check((await directionOnHome()) === '考研', '首页从本地问卷记录里显示出方向')
 
   // ---------- 5. 个人中心 ----------
   section('【5】个人中心（已登录）')

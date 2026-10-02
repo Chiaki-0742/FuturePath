@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { getToken } from '@/utils/token'
 import { useUserStore } from '@/stores/user'
+import { hasSurveyRecord, localUsername } from '@/utils/survey'
 
 /**
  * 路由表 —— 四个页面在这里登记。
@@ -35,6 +36,12 @@ const routes = [
     name: 'register',
     component: () => import('@/views/Register.vue'),
     meta: { title: '注册' },
+  },
+  {
+    path: '/survey',
+    name: 'survey',
+    component: () => import('@/views/Survey.vue'),
+    meta: { requiresAuth: true, title: '规划问卷' },
   },
   {
     path: '/profile',
@@ -73,6 +80,25 @@ router.beforeEach((to) => {
   if (to.meta.requiresAuth && !isLoggedIn) {
     // 记住原本想去哪，登录成功后直接送回去
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  // ---------------------------------------------------------------
+  // 新手引导：还没填过问卷的人，先引导去问卷页
+  //
+  // 这里能"马上"判断，是有前提的：mock 模式下 token 是自己拼的
+  // （mock-token.用户名.时间戳），能反解出用户名，所以能立刻查本地记录。
+  // 真后端返回的是一串随机字符，反解不出用户名，这里只能先放行 ——
+  // 等首页用 GET /api/me 拿到用户名后再兜底一次（见 Home.vue）。
+  // 两条路都得有，否则"新用户被自动带去问卷"这件事在真后端下会失效。
+  //
+  // 登录页和注册页要排除掉：这两个页面本来就是"还没决定去哪"的状态，
+  // 在这上面再加一层跳转，会绕一圈才到地方。
+  // ---------------------------------------------------------------
+  if (isLoggedIn && to.name !== 'survey' && to.name !== 'login' && to.name !== 'register') {
+    const username = userStore.userInfo?.username || localUsername()
+    if (username && !hasSurveyRecord(username)) {
+      return { name: 'survey', query: { redirect: to.fullPath } }
+    }
   }
 
   // 已经登录了还想去登录/注册页，直接送去首页

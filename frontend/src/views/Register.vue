@@ -116,9 +116,10 @@ async function handleSubmit() {
     // 后端目前是返回 {token} 的（注册即登录）。
     // 万一某个实现没返回 token，就退回「跳登录页，把用户名带过去预填」。
     if (data && data.token) {
-      success.value = '注册成功，正在进入首页…'
+      // 新手引导：刚注册的人一定没填过问卷，直接带过去填（任务 10/02 第 2 项）
+      success.value = '注册成功，先花一分钟完成问卷…'
       setTimeout(() => {
-        router.push({ name: 'home' })
+        router.push({ name: 'survey' })
       }, 800)
     } else {
       success.value = '注册成功，正在跳转到登录页…'

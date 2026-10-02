@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { USE_MOCK } from '@/api/config'
+import { hasSurveyRecord } from '@/utils/survey'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,8 +44,17 @@ async function handleSubmit() {
     })
 
     // 登录前想去的页面（被守卫拦下来时记的），登录后送回去
-    const redirect = route.query.redirect
-    router.push(typeof redirect === 'string' ? redirect : { name: 'home' })
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+
+    // 新手引导：还没填过问卷的人，先带去填（任务 10/02 第 2 项）。
+    // 这里用登录框里刚填的用户名判断 —— 它就是账号名，
+    // mock 和真后端都拿得到，比从 token 里反解稳妥。
+    if (!hasSurveyRecord(form.username.trim())) {
+      router.push({ name: 'survey', query: redirect ? { redirect } : {} })
+      return
+    }
+
+    router.push(redirect || { name: 'home' })
   } catch (e) {
     error.value = e.message || '登录失败，请稍后重试'
   } finally {

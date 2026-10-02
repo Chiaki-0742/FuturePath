@@ -273,6 +273,45 @@ const bail = (title, lines) => {
     await sleep(150)
   }
 
+  // 按文字点一个可见的选项（问卷三屏都在 DOM 里，只有一屏可见，必须先筛掉藏起来的）
+  const clickOption = async (label) => {
+    const found = await evaluate(
+      '(() => {\n' +
+        '  var items = []\n' +
+        '  Array.from(document.querySelectorAll(".el-form-item"))\n' +
+        '    .filter(function (el) { return el.offsetParent !== null })\n' +
+        '    .forEach(function (item) {\n' +
+        '      Array.from(item.querySelectorAll(".el-radio, .el-checkbox")).forEach(function (x) { items.push(x) })\n' +
+        '    })\n' +
+        '  var target = items.find(function (el) { return el.innerText.replace(/\\s+/g, "") === ' +
+        JSON.stringify(label) +
+        ' })\n' +
+        '  if (!target) return false\n' +
+        '  target.click()\n' +
+        '  return true\n' +
+        '})()'
+    )
+    await sleep(170)
+    return found
+  }
+
+  // 按文字点一个可见的按钮（"下一步""提交问卷"这类）
+  const clickButton = async (label) => {
+    const found = await evaluate(
+      '(() => {\n' +
+        '  var btns = Array.from(document.querySelectorAll("button")).filter(function (b) {\n' +
+        '    return b.offsetParent !== null && b.innerText.replace(/\\s+/g, "") === ' +
+        JSON.stringify(label) +
+        ' })\n' +
+        '  if (!btns.length) return false\n' +
+        '  btns[0].click()\n' +
+        '  return true\n' +
+        '})()'
+    )
+    await sleep(700)
+    return found
+  }
+
   const APP_MARKER = '登录后查看你的个人规划'
 
   // 随机账号名：带时间戳，模拟数据里绝不可能存在
@@ -282,7 +321,7 @@ const bail = (title, lines) => {
   const major = '软件工程'
 
   // ---------- 1. 页面注册（走真后端） ----------
-  section('【1】注册（真后端）：填表 -> 提交 -> 应自动登录进首页')
+  section('【1】注册（真后端）-> 自动进问卷 -> 填完提交 -> 首页显示方向')
   await clearToken()
   await goto('/register')
   await fill([
@@ -302,7 +341,44 @@ const bail = (title, lines) => {
 
   const token = await getToken()
   check(!!token && token.length > 10, '后端返回了 token 并且前端存下来了')
-  check(hash === '#/', '注册成功后自动进入首页')
+  // 2026-10-02 起：新注册的用户不再直接进首页，先被新手引导带去填问卷
+  check(hash === '#/survey', '注册成功后先进入问卷页（新手引导）')
+  check(text.includes('第 1 步 / 共 3 步'), '问卷页正常渲染（进度显示第几步）')
+
+  // 这一段同时在验证【后端问卷接口还没上线时，前端会不会崩】：
+  //   GET  /api/questions 现在实测是 404  → 题目要能回落到内置题库
+  //   POST /api/answers   现在也是 404   → 提交要能回落到本地保存，不能报错白屏
+  // 等后端把这两个接口做出来（10/03），这段会自动变成"验证真接口"，脚本一个字都不用改。
+  check(text.includes('未来方向'), '接口 404 时题目回落到内置题库（页面没白屏）')
+
+  check(await clickOption('考研'), '第 1 屏选中「考研」')
+  await clickButton('下一步')
+  text = await bodyText()
+  check(text.includes('第 2 步 / 共 3 步'), '进入第 2 屏（当前现状）')
+
+  // B 组 6 题：年级 / 专业 / 学校 / 成绩 / 英语 / 经历（多选）
+  const statusPicks = ['大三', '理工类', '普通一本', '前30%', '已过六级', '实习']
+  let pickedAll = true
+  for (const opt of statusPicks) {
+    if (!(await clickOption(opt))) {
+      pickedAll = false
+      console.log('   ⚠️ 页面上没找到这个选项:', opt)
+    }
+  }
+  check(pickedAll, '第 2 屏 6 道题都选上了')
+
+  await clickButton('下一步')
+  check(await clickOption('具体怎么准备'), '第 3 屏选中一个想了解的问题')
+  await clickButton('提交问卷')
+  await sleep(2800)
+
+  hash = await currentHash()
+  text = await bodyText()
+  check(hash === '#/', '提交问卷后进入首页')
+  const dir = await evaluate(
+    '(() => { var el = document.querySelector(".direction"); return el ? el.innerText.trim() : "" })()'
+  )
+  check(dir === '考研', '首页显示问卷里选的方向（真后端下也能显示）')
   check(text.includes(username), '首页显示了刚注册的用户名（' + username + '）')
 
   // ---------- 2. 与后端直接对账 ----------
