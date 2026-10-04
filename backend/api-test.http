@@ -200,3 +200,61 @@ Authorization: Bearer {{token2}}
 ###    USE futurepath;
 ###    SELECT id, user_id, direction, grade, status_json, interest_json FROM answers;
 ###    期望：中文是"留学/考研"这种可读文字，而不是 \u8003\u7814 转义码
+
+
+### ============================================================
+### 第二阶段 · 案例接口（对应 docs/接口文档-第二阶段.md 3.4 / 3.5 节）
+###
+### 前提：下面都依赖顶部 @token 是有效 token（先跑 ③ 登录）
+### 提醒：测试顺序会影响结果！⑱ 之前如果没填过问卷，返回的是 1005；
+###       ⑲ 会顺手把问卷填成"考研/大三"，之后 ⑳ 才是正常的推荐结果。
+### ============================================================
+
+### ⑱ 没填问卷又没传参数（期望 code:1005 "请先完成问卷"）
+###    ★ 如果这条返回了 code:0，说明这个账号已经填过问卷了，跳过直接看 ⑲
+GET http://127.0.0.1:5000/api/cases
+Authorization: Bearer {{token}}
+
+### ⑲ 手动指定方向（不填问卷也能用，参数优先）
+###    期望：code:0 + total + list（3 条考研案例）+ relaxed:false
+GET http://127.0.0.1:5000/api/cases?direction=考研&grade=大三&limit=3
+Authorization: Bearer {{token}}
+
+### ⑳ 不传参数 = 用自己问卷里的方向年级（先把问卷填成考研/大三）
+###    期望：code:0，3 条都是 考研/大三
+###    ★ 注意 list 里【没有 experience 字段】—— 那是详情页才给的
+POST http://127.0.0.1:5000/api/answers
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "direction": "考研",
+  "grade": "大三",
+  "status": { "major_type": "理工类" },
+  "interest": ["具体怎么准备"],
+  "extra_note": ""
+}
+
+###
+GET http://127.0.0.1:5000/api/cases
+Authorization: Bearer {{token}}
+
+### ㉑ 冷门方向兜底（"创业"在案例库里一条都没有）
+###    期望：code:0，仍然返回 3 条 + relaxed:true
+###    ★ 这是刻意设计：宁可给相近案例，也不给空页面（前端会据此提示"给你看看相近的"）
+GET http://127.0.0.1:5000/api/cases?direction=创业&grade=大三
+Authorization: Bearer {{token}}
+
+### ㉒ 案例详情（带 experience 和 steps 时间线）
+###    期望：code:0，data 里有 experience，steps 有 8 条按 order_no 升序，
+###          其中 is_key:1 的是关键节点（前端要标红）
+GET http://127.0.0.1:5000/api/cases/1
+Authorization: Bearer {{token}}
+
+### ㉓ 案例不存在（期望 code:1001 "案例不存在"）
+GET http://127.0.0.1:5000/api/cases/999
+Authorization: Bearer {{token}}
+
+### ㉔ 不带 token 查案例（期望 code:401 "请先登录"）
+GET http://127.0.0.1:5000/api/cases
+

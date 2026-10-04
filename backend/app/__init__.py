@@ -21,9 +21,11 @@ def create_app():
 
     # 注册路由
     from app.routes.auth import auth_bp
+    from app.routes.case import case_bp
     from app.routes.survey import survey_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(survey_bp)   # 第二阶段：问卷三接口
+    app.register_blueprint(case_bp)     # 第二阶段：案例两接口
 
     # 健康检查接口：用于确认后端是否活着
     @app.route("/api/health")
