@@ -50,6 +50,14 @@ const routes = [
     meta: { requiresAuth: true, title: '真实案例' },
   },
   {
+    // 案例详情。注意这条要写在 '/cases' 后面 ——
+    // vue-router 是按顺序匹配的，先写这条的话 '/cases' 会被它当成 id="xxx" 吃掉。
+    path: '/cases/:id',
+    name: 'case-detail',
+    component: () => import('@/views/CaseDetail.vue'),
+    meta: { requiresAuth: true, title: '案例详情' },
+  },
+  {
     path: '/profile',
     name: 'profile',
     component: () => import('@/views/Profile.vue'),

@@ -298,3 +298,151 @@ export function profileTags(item) {
     .map((x) => (x || '').trim())
     .filter(Boolean)
 }
+
+// ===========================================================================
+//  案例详情（10/04 · 时间线 / 关键节点 / 经验教训）
+// ===========================================================================
+
+/**
+ * 离线步骤库。键 = 案例 id，值 = 该案例的时间线。
+ *
+ * ⚠️ 与 backend/init.sql 第 10 步 case_steps 的 INSERT 【一字不差】——
+ *    包括正文里那个 ★ 符号（案例 3、案例 7 的原句里就有，是原作者的强调，
+ *    不是排版失误，所以照抄不改）。
+ *
+ * 为什么要在这里抄一份？
+ *   和后端没起时列表页照样能开是一个道理：详情页要是"点进去一片空白"，
+ *   演示时比列表页空白更难解释。但它的定位始终是【离线兜底】，
+ *   接口通了就以接口为准。
+ *
+ * is_key = 1 → 关键节点（报名、考试、换校这类"错过就来不及"的时间点）。
+ * 详情页会把它们用不同颜色和角标标出来。
+ */
+export const FALLBACK_STEPS = {
+  // ---------- 1. 双非计算机考研 ----------
+  1: [
+    { phase: '大三上', content: '确定目标院校和专业，收集历年分数线、报录比；开始数学一轮复习', is_key: 1, order_no: 1 },
+    { phase: '大三上', content: '英语单词每天 50 个，不中断', is_key: 0, order_no: 2 },
+    { phase: '大三下', content: '数学二轮强化；专业课教材过一遍并做笔记', is_key: 0, order_no: 3 },
+    { phase: '大三下', content: '英语开始做真题阅读，一周 2 套', is_key: 0, order_no: 4 },
+    { phase: '暑假', content: '数学刷 1000 题；专业课背诵第一轮；英语真题精读', is_key: 1, order_no: 5 },
+    { phase: '大四上', content: '政治冲刺；各科真题模拟；调整作息到考试节奏', is_key: 0, order_no: 6 },
+    { phase: '9月-10月', content: '关注研招网，9 月预报名、10 月正式报名（错过就只能等明年）', is_key: 1, order_no: 7 },
+    { phase: '12月', content: '打印准考证，提前踩点考场，参加初试', is_key: 1, order_no: 8 },
+  ],
+
+  // ---------- 2. 文科跨考 ----------
+  2: [
+    { phase: '大二下-大三上', content: '判断保研无望，决定考研；进课题组做课题，拿到科研项目参与证明', is_key: 0, order_no: 1 },
+    { phase: '大三下（3月）', content: '专业课第一轮，通读 8 本参考书（10-15 天/本），配套网课', is_key: 1, order_no: 2 },
+    { phase: '大三下暑假', content: '第二遍读书 + 整理知识框架', is_key: 0, order_no: 3 },
+    { phase: '8月', content: '进入背书 + 输出的黄金期', is_key: 0, order_no: 4 },
+    { phase: '10月', content: '第二轮背书 + 补充学科热点', is_key: 0, order_no: 5 },
+    { phase: '11月', content: '开始模拟考，重点训练时间分配', is_key: 1, order_no: 6 },
+    { phase: '12月底', content: '参加初试（次年 2 月出分）', is_key: 1, order_no: 7 },
+  ],
+
+  // ---------- 3. 经管考研换校 ----------
+  3: [
+    { phase: '大三下-9月前', content: '以某 985 为目标复习，主攻数学和专业课', is_key: 0, order_no: 1 },
+    { phase: '8月底', content: '专业课复习差距明显，心态出现波动', is_key: 0, order_no: 2 },
+    { phase: '9月', content: '★ 及时更换目标院校为 211（9 月是换校关键窗口）', is_key: 1, order_no: 3 },
+    { phase: '10月之后', content: '主攻政治肖八肖四 + 时政', is_key: 0, order_no: 4 },
+    { phase: '11月', content: '开始隔天练翻译；后期整卷训练英语', is_key: 0, order_no: 5 },
+    { phase: '12月', content: '考前一周重做肖八肖四，进入考试节奏', is_key: 1, order_no: 6 },
+  ],
+
+  // ---------- 4. 二本进银行（城商行） ----------
+  4: [
+    { phase: '大三下', content: '开始准备简历；了解银行招聘流程和时间线', is_key: 0, order_no: 1 },
+    { phase: '大三暑假', content: '争取银行或相关行业实习（实习经历是简历的敲门砖）', is_key: 1, order_no: 2 },
+    { phase: '大四上 9-10月', content: '秋招主战场：网申、笔试、面试同步进行', is_key: 1, order_no: 3 },
+    { phase: '大四上', content: '提前一个月刷行测题，银行笔试必考', is_key: 0, order_no: 4 },
+    { phase: '大四上 11-12月', content: '面试复盘，多投多练；拿到 offer 后及时签约', is_key: 0, order_no: 5 },
+  ],
+
+  // ---------- 5. 会计学秋招 ----------
+  5: [
+    { phase: '大三暑假', content: '在银行营业部实习理财岗、大堂服务岗，确定就业方向', is_key: 1, order_no: 1 },
+    { phase: '大四上 8月起', content: '关注秋招网申，投 6 家国有行 + 部分股份行', is_key: 1, order_no: 2 },
+    { phase: '9-11月', content: '密集参加笔试和面试（5 家通过笔试进面）', is_key: 0, order_no: 3 },
+    { phase: '11-12月', content: '对比 offer 条款（岗位、地点、服务年限）后签约', is_key: 1, order_no: 4 },
+  ],
+
+  // ---------- 6. 师范考教师编 ----------
+  6: [
+    { phase: '大三下', content: '确定考编目标；跟踪人社局/教育局网站 + 加入备考群', is_key: 0, order_no: 1 },
+    { phase: '大四上', content: '笔试：反复看书 + 刷 3600 题 + 真题套卷', is_key: 1, order_no: 2 },
+    { phase: '面试前', content: '提前拿到 10 篇篇目，每篇讲近 10 遍练到肌肉记忆', is_key: 1, order_no: 3 },
+    { phase: '面试当天', content: '现场随机抽 1 篇，10 分钟准备后试讲', is_key: 1, order_no: 4 },
+  ],
+
+  // ---------- 7. 保研 ----------
+  7: [
+    { phase: '大一', content: '就读农学，重心放在提绩点和参加活动上', is_key: 0, order_no: 1 },
+    { phase: '大二', content: '★ 转入经济统计学专业；参加人口普查、信息素养大赛', is_key: 1, order_no: 2 },
+    { phase: '大二升大三暑假', content: '组队备战全国大学生数学建模竞赛', is_key: 0, order_no: 3 },
+    { phase: '大三开学', content: '获数模国赛国二等；明确"绩点 + 竞赛"可冲保研', is_key: 1, order_no: 4 },
+    { phase: '大三下（5-7月）', content: '夏令营海投（简历/个人陈述/推荐信/参营论文要提前备好）', is_key: 1, order_no: 5 },
+    { phase: '9月', content: '预推免用"综合第一"排名投递（注意面试撞车）', is_key: 1, order_no: 6 },
+  ],
+
+  // ---------- 8. 考公 ----------
+  8: [
+    { phase: '大三上', content: '自学编程，确定走互联网技术路线', is_key: 0, order_no: 1 },
+    { phase: '大四春招', content: '进入大厂实习并转正', is_key: 0, order_no: 2 },
+    { phase: '工作 1 年后', content: '经历项目被砍、同事被优化，决心考公', is_key: 1, order_no: 3 },
+    { phase: '在职备考 3 个月', content: '利用地铁、午休等所有碎片时间刷题，一次上岸', is_key: 1, order_no: 4 },
+    { phase: '考前', content: '找到 2 位引路朋友带入备考氛围', is_key: 0, order_no: 5 },
+  ],
+
+  // ---------- 9. 留学 PhD ----------
+  9: [
+    { phase: '大一-大三', content: '跨数学/机械/生物/医学多门课程，换过多个实验室找方向', is_key: 0, order_no: 1 },
+    { phase: '大三', content: '选定生物医学科学方向，进医学院课题组做独立研究', is_key: 1, order_no: 2 },
+    { phase: '大二下-申请季', content: '备考托福（建议假期集中培训 1 个多月后立即考）', is_key: 1, order_no: 3 },
+    { phase: '申请季', content: 'DIY 撰写文书和研究计划，联系推荐人', is_key: 0, order_no: 4 },
+    { phase: '次年 3-4月', content: '收到多校 offer，综合导师方向和资源后确定去向', is_key: 1, order_no: 5 },
+  ],
+
+  // ---------- 10. 留学 3+2 ----------
+  10: [
+    { phase: '大二-大三', content: '参加 3+2 联合培养项目，提前适应海外学习科研', is_key: 1, order_no: 1 },
+    { phase: '海外期间', content: '做独立科研，发表一篇期刊一作、一篇会议一作', is_key: 1, order_no: 2 },
+    { phase: '申请季前', content: '暑研/学期交流期间争取拿到国外推荐信', is_key: 1, order_no: 3 },
+    { phase: '申请季', content: '套磁导师 + 文书，按"导师方向匹配"选校', is_key: 0, order_no: 4 },
+    { phase: '次年 2-4月', content: '收到 offer，在 UCLA、Duke、康奈尔中选择', is_key: 1, order_no: 5 },
+  ],
+}
+
+/** 从离线库按 id 找一条案例（找不到返回 null，调用方自己决定怎么提示） */
+export function fallbackCase(id) {
+  const n = Number(id)
+  return FALLBACK_CASES.find((c) => Number(c.id) === n) || null
+}
+
+/** 从离线库按 id 取该案例的步骤（已按 order_no 排好序） */
+export function fallbackSteps(id) {
+  const list = FALLBACK_STEPS[Number(id)] || []
+  return list.slice().sort((a, b) => a.order_no - b.order_no)
+}
+
+/**
+ * 判断一个步骤是不是关键节点。
+ *
+ * 为什么要用一个函数、而不是直接写 `s.is_key === 1`？
+ *   因为 is_key 从数据库一路过来，可能变成 1 / "1" / true 中的任何一种
+ *   （SQLite 和 MySQL 的类型处理不一样，中间还可能过一遍 JSON）。
+ *   前端只跟一个"是/否"打交道，转换的脏活集中在这里做，
+ *   免得页面上到处写 `Number(x) === 1` 这种容易漏的写法。
+ */
+export function isKeyStep(step) {
+  if (!step) return false
+  const v = step.is_key
+  return v === 1 || v === true || v === '1'
+}
+
+/** 从一组步骤里挑出关键节点（详情页顶部的"其中 N 个关键节点"要用） */
+export function keySteps(steps) {
+  return (steps || []).filter(isKeyStep)
+}

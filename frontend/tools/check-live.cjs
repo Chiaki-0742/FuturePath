@@ -324,6 +324,42 @@ const bail = (title, lines) => {
       '(() => { var e = document.querySelector(".filter--on"); return e ? e.innerText.trim() : "" })()'
     )) || ''
 
+  // ---- 案例详情页专用 ----
+  //
+  // 点一张案例卡片。整张卡片是个 <a class="case">，里面包着标题/画像/概述，
+  // 所以只能按"文字包含"来找，不能像按钮那样精确匹配。
+  const clickCaseCard = async (titlePart) => {
+    const found = await evaluate(
+      '(() => {\n' +
+        '  var els = Array.from(document.querySelectorAll("a.case"))\n' +
+        '  var t = els.find(function (a) { return a.innerText.indexOf(' +
+        JSON.stringify(titlePart) +
+        ') >= 0 })\n' +
+        '  if (!t) return false\n' +
+        '  t.click()\n' +
+        '  return true\n' +
+        '})()'
+    )
+    await sleep(600)
+    return found
+  }
+
+  // 读某个元素的背景色（"关键节点很醒目"这件事要量出来，不靠肉眼）
+  const bgColor = async (sel) =>
+    (await evaluate(
+      '(() => { var e = document.querySelector(' +
+        JSON.stringify(sel) +
+        '); return e ? getComputedStyle(e).backgroundColor : "" })()'
+    )) || ''
+
+  // 橙色系判断：rgb(217, 136, 23) 的特征是 红 > 绿 > 蓝 且拉得开
+  const isOrangeColor = (c) => {
+    const m = String(c).match(/[\d.]+/g)
+    if (!m) return false
+    const [r, g, b] = m.map(Number)
+    return r > 180 && r > g && g > b + 40
+  }
+
   const APP_MARKER = '登录后查看你的个人规划'
 
   // 随机账号名：带时间戳，模拟数据里绝不可能存在
@@ -606,6 +642,44 @@ const bail = (title, lines) => {
   check(
     !/共 \d+ 条「创业」的案例/.test(ctext),
     '页面上不存在"共 N 条「创业」的案例"这种误导文案（本次修复的验证点）'
+  )
+
+  // ---------- 10. 案例详情页（真后端） ----------
+  // 交付标准是「展示时间线、关键节点、经验教训 —— 能看到完整步骤」，
+  // 这里逐条对着验，重点是"步骤是不是从后端真的取全了"。
+  section('【10】案例详情页（真后端）：完整步骤 + 关键节点 + 经验教训')
+  await goto('/cases', 2600)
+  const cardOk = await clickCaseCard('双非计算机大三考研上岸 211')
+  await sleep(2400)
+  check(cardOk, '点得到列表里的案例卡片')
+  check((await currentHash()).indexOf('#/cases/1') === 0, '点进去到了详情页（地址 #/cases/1）')
+
+  const dtext = await bodyText()
+  check(dtext.includes('双非计算机大三考研上岸 211'), '详情页显示案例标题')
+  check(dtext.includes('经验教训'), '有「经验教训」这一块')
+  check(dtext.includes('数学开始太晚'), '从后端拿到了 experience 字段的原文')
+  // 硬证据同上：接口没通时页面会多一行降级提示，不出现就说明数据来自后端
+  check(!dtext.includes('案例接口还没上线'), '详情数据来自后端（没出现降级提示）')
+
+  const dSteps = ((await evaluate('document.querySelectorAll(".step").length')) || 0)
+  const dKeys = ((await evaluate('document.querySelectorAll(".step--key").length')) || 0)
+  check(dSteps === 8, '后端给的 8 个步骤【全部】展示出来（当前 ' + dSteps + ' 步）')
+  check(dKeys === 4, '4 个关键节点（is_key=1）被标出来（当前 ' + dKeys + ' 个）')
+  check(
+    dtext.includes('共 8 步') && dtext.includes('4 个关键节点'),
+    '页面给出了"共几步、其中几个关键节点"的统计'
+  )
+  check(
+    dtext.includes('打印准考证，提前踩点考场，参加初试'),
+    '最后一步的内容也在页面上（步骤是完整的，不是只显示前几步）'
+  )
+
+  // 关键节点必须真的"看起来不一样"—— 实测颜色
+  const keyC = await bgColor('.step--key .step__dot')
+  const normalC = await bgColor('.step:not(.step--key) .step__dot')
+  check(
+    isOrangeColor(keyC) && keyC !== normalC,
+    '关键节点是醒目的橙色标记，和普通节点实测不同（' + keyC + ' vs ' + normalC + '）'
   )
 
   // ---------- 汇总 ----------

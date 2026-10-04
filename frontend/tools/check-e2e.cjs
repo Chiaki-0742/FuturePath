@@ -341,6 +341,54 @@ function bail(title, lines) {
     return found
   }
 
+  // ---- 案例详情页专用 ----
+  //
+  // 点一张案例卡片。卡片整个是个 <a class="case">，里面包着标题/画像/概述，
+  // 所以不能像 clickLink 那样"按按钮文字精确匹配"，得用"文字包含"来找。
+  const clickCaseCard = async (titlePart) => {
+    const found = await evaluate(
+      '(() => {\n' +
+        '  var els = Array.from(document.querySelectorAll("a.case"))\n' +
+        '  var t = els.find(function (a) { return a.innerText.indexOf(' +
+        JSON.stringify(titlePart) +
+        ') >= 0 })\n' +
+        '  if (!t) return false\n' +
+        '  t.click()\n' +
+        '  return true\n' +
+        '})()'
+    )
+    await sleep(500)
+    return found
+  }
+
+  // 点详情页左上角的「← 返回案例列表」
+  const clickBack = async () => {
+    const ok = await evaluate(
+      '(() => { var a = document.querySelector("a.back"); if (!a) return false; a.click(); return true })()'
+    )
+    await sleep(1600)
+    return ok
+  }
+
+  // 读某个元素的背景色。
+  // ⚠️「关键节点很醒目」这件事必须【量】出来 —— 靠肉眼看截图判断颜色差别
+  //    在这类断言上翻过车，一行 getComputedStyle 比眼睛可靠得多。
+  const bgColor = async (sel) =>
+    (await evaluate(
+      '(() => { var e = document.querySelector(' +
+        JSON.stringify(sel) +
+        '); return e ? getComputedStyle(e).backgroundColor : "" })()'
+    )) || ''
+
+  // 判断颜色是不是橙色系（关键节点用的那个色）：
+  // rgb(217, 136, 23) 的特征是 红 > 绿 > 蓝，且三者拉得开。
+  const isOrangeColor = (c) => {
+    const m = String(c).match(/[\d.]+/g)
+    if (!m) return false
+    const [r, g, b] = m.map(Number)
+    return r > 180 && r > g && g > b + 40
+  }
+
   const APP_MARKER = '登录后查看你的个人规划' // 登录页上的一句固定文案，用来判断页面到底渲染出来没有
 
   const seed = Date.now().toString().slice(-6)
@@ -632,6 +680,62 @@ function bail(title, lines) {
     check(isRelaxed(allKy, '考研', true) === true, '后端明确说放宽了 -> 以后端为准')
     check(isRelaxed(mixed, '创业', null) === true, '后端没给布尔值（null）-> 前端自己也算得对')
   }
+
+  // ---------- 4-g. 案例详情页 ----------
+  // 交付标准是「展示时间线、关键节点、经验教训 —— 能看到完整步骤」，
+  // 所以这一组用例逐条对着这句话验：步骤全不全、关键节点认不认得出来、
+  // 经验教训在不在。
+  section('【4-g】案例详情页：时间线 / 关键节点 / 经验教训')
+  await goto('/cases', 2600)
+  const cardClicked = await clickCaseCard('双非计算机大三考研上岸 211')
+  await sleep(2000)
+  check(cardClicked, '点得到列表里的案例卡片')
+  check((await currentHash()).indexOf('#/cases/1') === 0, '点进去到了详情页（地址 #/cases/1）')
+
+  text = await bodyText()
+  check(text.includes('双非计算机大三考研上岸 211'), '详情页显示案例标题')
+  check(text.includes('经验教训'), '有「经验教训」这一块')
+  check(text.includes('数学开始太晚'), '显示了数据库里那句经验教训原文')
+  check(text.includes('已上岸某 211 计算机专硕'), '显示了最终结果')
+
+  // 时间线：8 步，其中 4 个是关键节点（与 init.sql 案例 1 的数据一致）
+  const stepCount = ((await evaluate('document.querySelectorAll(".step").length')) || 0)
+  const keyCount = ((await evaluate('document.querySelectorAll(".step--key").length')) || 0)
+  check(stepCount === 8, '时间线【完整】展示了 8 个步骤（当前 ' + stepCount + ' 步）')
+  check(keyCount === 4, '其中 4 个关键节点被单独标了出来（当前 ' + keyCount + ' 个）')
+  check(
+    text.includes('共 8 步') && text.includes('4 个关键节点'),
+    '页面上给出了"共几步、其中几个关键节点"的统计'
+  )
+
+  // 完整步骤：第 1 步和最后一步的内容都要在，只显示前几步不算"完整"
+  check(text.includes('确定目标院校和专业，收集历年分数线'), '第 1 步的内容在页面上')
+  check(text.includes('打印准考证，提前踩点考场，参加初试'), '第 8 步（最后一步）的内容也在页面上')
+  check(text.includes('关键节点'), '关键节点上有「关键节点」角标')
+
+  // 关键节点要真的"看起来不一样"—— 实测颜色，不靠眼睛
+  const keyDot = await bgColor('.step--key .step__dot')
+  const normalDot = await bgColor('.step:not(.step--key) .step__dot')
+  check(
+    keyDot !== '' && normalDot !== '' && keyDot !== normalDot,
+    '关键节点的圆点颜色和普通节点【实测】不一样（' + keyDot + ' vs ' + normalDot + '）'
+  )
+  check(isOrangeColor(keyDot), '关键节点用的是醒目的橙色标记（' + keyDot + '）')
+
+  // 返回列表要能回得去，并且带回原来的筛选方向
+  const backOk = await clickBack()
+  await sleep(1800)
+  check(backOk && (await currentHash()).indexOf('#/cases') === 0, '能返回案例列表')
+  check((await activeFilter()) === '考研', '返回后仍保持原来的方向筛选')
+
+  // ---------- 4-h. 详情页：不存在的案例 ----------
+  // 地址里的 id 写错了（或者那条案例被删了）也不能白屏 ——
+  // "页面一片空白"和"页面告诉你没有这条案例"是完全不同的体验。
+  section('【4-h】案例详情页：不存在的案例')
+  await goto('/cases/9999', 2400)
+  text = await bodyText()
+  check(text.includes('没有找到这条案例'), 'id 不存在时给出明确提示（没有白屏）')
+  check(text.includes('看看全部案例'), '并且给了一个回列表的出口')
 
   // ---------- 5. 个人中心 ----------
   section('【5】个人中心（已登录）')

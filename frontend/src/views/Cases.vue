@@ -180,7 +180,17 @@ const isEmpty = computed(() => !loading.value && cases.value.length === 0)
       </div>
 
       <div v-else class="cases">
-        <article v-for="item in cases" :key="item.id" class="case">
+        <!--
+          整张卡片就是一个链接，点哪都能进详情。
+          用 RouterLink 而不是"点标题才进"：卡片上写着"人物画像 + 概述 + 结果"，
+          用户想点哪块是不确定的，让整块都可点是唯一不会让人困惑的做法。
+        -->
+        <RouterLink
+          v-for="item in cases"
+          :key="item.id"
+          :to="{ name: 'case-detail', params: { id: item.id } }"
+          class="case"
+        >
           <div class="case__head">
             <h2 class="case__title">{{ item.title }}</h2>
             <span class="chip chip--direction">{{ item.direction }}</span>
@@ -199,7 +209,9 @@ const isEmpty = computed(() => !loading.value && cases.value.length === 0)
             <span class="case__result-label">结果</span>
             {{ item.result }}
           </p>
-        </article>
+
+          <span class="case__more">查看完整路线 →</span>
+        </RouterLink>
       </div>
     </template>
   </div>
@@ -274,6 +286,15 @@ const isEmpty = computed(() => !loading.value && cases.value.length === 0)
   background: var(--surface);
   box-shadow: 0 1px 2px rgba(28, 36, 48, 0.03);
   transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+  /* 整张卡片是个 <a>，要把链接默认的蓝字和下划线去掉，
+     否则卡片里每行文字都会变成"可点链接"的样子，很难看 */
+  color: inherit;
+  text-decoration: none;
+}
+
+.case:hover {
+  color: inherit;
+  text-decoration: none;
 }
 
 .case:hover {
@@ -352,6 +373,18 @@ const isEmpty = computed(() => !loading.value && cases.value.length === 0)
   color: var(--success);
   font-size: 12px;
   font-weight: 500;
+}
+
+/* "查看完整路线"：卡片可点这件事得有个明确提示，
+   不然用户不一定知道卡片能点进去 */
+.case__more {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--primary);
+}
+
+.case:hover .case__more {
+  text-decoration: underline;
 }
 
 @media (max-width: 640px) {

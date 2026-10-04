@@ -1,6 +1,12 @@
 import request from './request'
 import { USE_MOCK } from './config'
-import { FALLBACK_CASES, isRelaxed, pickCases } from '@/utils/cases'
+import {
+  FALLBACK_CASES,
+  fallbackCase,
+  fallbackSteps,
+  isRelaxed,
+  pickCases,
+} from '@/utils/cases'
 
 /**
  * 案例相关接口。对应接口文档（docs/接口文档-第二阶段.md）3.4 节：
@@ -92,5 +98,52 @@ export async function fetchCases({ direction = '', grade = '', limit = 6 } = {})
   } catch {
     // 接口还没上线（404）或后端没起 —— 用离线案例库，页面照样能用
     return { ...local(), synced: false }
+  }
+}
+
+/**
+ * 取案例详情。对应接口文档 3.5 节：
+ *
+ *   GET /api/cases/<id>   案例详情（带 steps 时间线）
+ *
+ * 详情比列表多的两个字段：
+ *   experience —— 经验教训（列表页【故意不返回】，详情页才有）
+ *   steps      —— 时间线，每项 { phase, content, is_key, order_no }
+ *
+ * 失败时会怎么办：
+ *   接口 404 / 后端没起 → 回落到离线案例库（内容与数据库一致），synced = false
+ *   这个 id 本地也没有   → 返回 null，由页面显示"这条案例不存在"
+ *
+ * ⚠️ 一个必须知道的前提：本地步骤库的 id 必须和数据库的 id 对得上。
+ *    init.sql 里 10 条案例的 id 就是 1-10，所以能对上；
+ *    如果哪天数据库改成从别的数字开始自增，这里会错位，
+ *    表现是"点进去看到的是别人案例的时间线"。改数据时记得同步。
+ */
+export async function fetchCaseDetail(id) {
+  // 本地兜底：案例 + 它自己的步骤，形状和接口返回完全一致
+  const local = () => {
+    const item = fallbackCase(id)
+    if (!item) return null
+    return { ...item, steps: fallbackSteps(id), synced: false }
+  }
+
+  if (USE_MOCK) {
+    const data = local()
+    return data ? { ...data, synced: true } : null
+  }
+
+  try {
+    const data = await request.get('/cases/' + encodeURIComponent(id))
+    // 接口通了但没给出案例主体（比如返回了个空对象）—— 别让页面拿到半个东西
+    if (!data || !data.id) throw new Error('empty detail')
+    return {
+      ...data,
+      // steps 一定要是数组。后端某天忘了带这个字段，
+      // 页面上就会因为 steps.length 报错而白屏 —— 这里先兜住。
+      steps: Array.isArray(data.steps) ? data.steps : [],
+      synced: true,
+    }
+  } catch {
+    return local()
   }
 }
