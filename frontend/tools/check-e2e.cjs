@@ -598,6 +598,41 @@ function bail(title, lines) {
     '统计文案说清了这是"其他方向"的案例，没冒名顶替'
   )
 
+  // ---------- 4-f. relaxed 判断（纯逻辑，不依赖后端） ----------
+  // 后端同学 review 时指出：接口层把 relaxed 硬编码成 false，会让"其他方向的案例"
+  // 被说成"「创业」的案例"。这条链路在页面上暂时触发不到（接口还没上线，
+  // mock 模式也不走那段代码），所以直接把判断函数捞出来，逐个场景验。
+  section('【4-f】relaxed 判断：别方向的案例不能被说成本方向的')
+  let isRelaxed = null
+  try {
+    const casesMod = await import(
+      require('node:url')
+        .pathToFileURL(path.join(__dirname, '..', 'src', 'utils', 'cases.js'))
+        .href
+    )
+    isRelaxed = casesMod.isRelaxed
+  } catch (e) {
+    isRelaxed = null
+  }
+  check(typeof isRelaxed === 'function', '能加载到案例判断逻辑（utils/cases.js 导出正常）')
+  if (typeof isRelaxed === 'function') {
+    const mixed = [
+      { id: 1, direction: '考研' },
+      { id: 2, direction: '就业' },
+    ]
+    const allKy = [
+      { id: 3, direction: '考研' },
+      { id: 4, direction: '考研' },
+    ]
+    check(isRelaxed(mixed, '创业', undefined) === true, '选了「创业」但返回的是别方向 -> 判为放宽')
+    check(isRelaxed(allKy, '考研', undefined) === false, '返回的确实全是所选方向 -> 不算放宽')
+    check(isRelaxed(mixed, '', undefined) === false, '没筛方向（全部）-> 不存在放宽')
+    check(isRelaxed([], '创业', undefined) === false, '接口返回空列表 -> 不算放宽（另走兜底）')
+    check(isRelaxed(mixed, '创业', false) === false, '后端明确说没放宽 -> 以后端为准')
+    check(isRelaxed(allKy, '考研', true) === true, '后端明确说放宽了 -> 以后端为准')
+    check(isRelaxed(mixed, '创业', null) === true, '后端没给布尔值（null）-> 前端自己也算得对')
+  }
+
   // ---------- 5. 个人中心 ----------
   section('【5】个人中心（已登录）')
   await goto('/profile')

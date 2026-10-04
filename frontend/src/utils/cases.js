@@ -262,6 +262,36 @@ export function pickCases({ direction, grade, limit = 6 } = {}, source) {
   return { list, total: list.length, relaxed, direction: wantDirection ? direction : '' }
 }
 
+/**
+ * 判断这一批案例是不是【被放宽过的】—— 请求了某个方向，但返回的列表里
+ * 一条这个方向的都没有，说明实际上展示的是别方向的案例。
+ *
+ * 为什么要单独抽成一个函数、而不是在接口层写一行？
+ *   因为这个判断有两个来源，必须合起来用：
+ *     ① 后端返回的 relaxed 字段（如果后端有返回的话）
+ *     ② 前端自己按返回数据算
+ *
+ *   只信 ①：万一后端某天不返回这个字段（注意 C 的接口文档 3.4 节里
+ *   确实【没有】定义 relaxed，是后端自己加的），前端就会把"别方向的案例"
+ *   说成"「创业」的案例" —— 等于骗用户，这是最不能接受的一种错误。
+ *   只算 ②：等于完全无视后端，也不好。
+ *   所以：后端给了明确的布尔值就用后端的，其余一律自己算。
+ *
+ * @param {Array}  list        接口/本地返回的案例数组
+ * @param {String} direction   本次请求的方向（'' 或 '全部' 表示没筛方向）
+ * @param {*}      serverValue 后端返回的 relaxed，可能 undefined / null / 非布尔
+ * @returns {Boolean}
+ */
+export function isRelaxed(list, direction, serverValue) {
+  // 后端给了明确答案就以后端为准
+  if (typeof serverValue === 'boolean') return serverValue
+  // 没筛方向（「全部」）就不存在"放宽"这回事
+  if (!direction || direction === ALL_DIRECTIONS) return false
+  const arr = list || []
+  // 空列表不算"放宽"，那是"一条都没有"，由调用方走另一条兜底逻辑
+  return arr.length > 0 && !arr.some((c) => c.direction === direction)
+}
+
 /** 案例卡片上的"人物画像"标签：学校层次 / 专业类型 / 起始年级 / 成绩水平 */
 export function profileTags(item) {
   return [item.school_level, item.major_type, item.grade, item.score_level]

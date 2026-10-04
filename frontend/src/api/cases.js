@@ -1,6 +1,6 @@
 import request from './request'
 import { USE_MOCK } from './config'
-import { FALLBACK_CASES, pickCases } from '@/utils/cases'
+import { FALLBACK_CASES, isRelaxed, pickCases } from '@/utils/cases'
 
 /**
  * 案例相关接口。对应接口文档（docs/接口文档-第二阶段.md）3.4 节：
@@ -71,11 +71,22 @@ export async function fetchCases({ direction = '', grade = '', limit = 6 } = {})
     // 所以宁可拿本地案例库里的相近案例顶上，也别给用户一个白页面。
     if (!list.length) return { ...local(), synced: true, emptyFromServer: true }
 
+    // 这批案例是不是"被放宽过的"（请求了某方向，返回的却是别方向的）。
+    //
+    // ⚠️ 这里曾经硬写成 relaxed: false，是错的（后端同学 review 时指出）。
+    //    后果：用户选"创业"，后端放宽后返回了别方向的案例，页面上却写着
+    //    "共 10 条「创业」的案例" —— 那 10 条根本不是创业案例，等于骗用户。
+    //
+    // 现在交给 isRelaxed()：后端有返回就以后端为准，后端没返回就自己算。
+    // 为什么还要"自己算"这一手？因为 C 的接口文档 3.4 节里【没有】定义
+    // relaxed 字段，它属于后端多加的信息。哪天后端不返回了，前端也得判对。
+    const relaxed = isRelaxed(list, direction, data.relaxed)
+
     return {
       list,
       total: typeof data.total === 'number' ? data.total : list.length,
       direction: direction || '',
-      relaxed: false,
+      relaxed,
       synced: true,
     }
   } catch {
