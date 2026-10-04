@@ -91,8 +91,112 @@ Content-Type: application/json
 ###    1. 新开一个终端，输入:  mysql -u root -p
 ###    2. 输入你的 MySQL 密码（密码问 C 要，**不要写在这个文件里** —— 这是公开仓库）
 ###    3. 依次执行:
-###       USE planning_db;
+###       USE futurepath;
 ###       SELECT id, username, name, major, grade, password_hash FROM users;
 ###    期望：看到 steven01，且 password_hash 是 scrypt:32768... 开头的一长串
 ###    ★ 注意：手册写的表名是 user，咱们的表名是 users（多了个 s）
 ###    ★ password_hash 是乱码 = 加密成功 = D2 验收通过！
+###    ★ 第二阶段起数据库从 planning_db 换成了 futurepath（C 的 init.sql），
+###      旧库 planning_db 里的老账号不在新库里，所以 ① 在新库上会正常注册成功
+
+
+### ============================================================
+### 第二阶段 · 问卷接口（对应 docs/接口文档-第二阶段.md 第 3 节）
+###
+### 说明：下面 ⑩-⑯ 都依赖顶部 @token 里有【有效】的 token，
+###       先跑完上面的 ③ 登录，把 token 粘到 @token = 后面并保存。
+###       另外注意：token 存在后端内存里，后端一重启就全部失效，
+###       这时重跑③拿新 token 即可。
+### ============================================================
+
+### ⑩ 获取问卷题目（GET，**不需要登录**）
+###    期望：code:0 + data.list 共 9 题；
+###         第1题 options 是数组 ["考研","就业",...] 而不是字符串；
+###         填空题（补充说明）的 options 是空数组 []
+GET http://127.0.0.1:5000/api/questions
+
+### ⑪ 提交问卷答案（POST，需登录）
+###    期望：code:0 "提交成功" + data.id
+POST http://127.0.0.1:5000/api/answers
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "direction": "考研",
+  "grade": "大三",
+  "status": {
+    "major_type": "理工类",
+    "school_level": "普通一本",
+    "score": "前30%",
+    "english": "已过六级",
+    "experience": ["实习", "竞赛获奖"]
+  },
+  "interest": ["具体怎么准备", "时间节点怎么安排"],
+  "extra_note": "数学基础比较差"
+}
+
+### ⑫ 查我的问卷结果（GET，需登录）
+###    期望：code:0 + filled:true，
+###          status 是【对象】、interest 是【数组】（不是转义字符串）
+###    再点一次⑪会覆盖同一份问卷（id 不变、行数不增加）
+GET http://127.0.0.1:5000/api/answers
+Authorization: Bearer {{token}}
+
+### ⑬ 没登录就提交问卷（权限测试）
+###    期望：code:401 "请先登录"
+POST http://127.0.0.1:5000/api/answers
+Content-Type: application/json
+
+{
+  "direction": "考研",
+  "grade": "大三",
+  "status": {},
+  "interest": []
+}
+
+### ⑭ direction 传个不在选项里的值（校验测试）
+###    期望：code:1006 "请选择未来方向"
+POST http://127.0.0.1:5000/api/answers
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "direction": "abc",
+  "grade": "大三",
+  "status": {},
+  "interest": []
+}
+
+### ⑮ interest 选超过 3 个（校验测试）
+###    期望：code:1006 "最多选 3 项"
+POST http://127.0.0.1:5000/api/answers
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "direction": "考研",
+  "grade": "大三",
+  "status": {},
+  "interest": ["该选哪条路", "每条路的利弊", "具体怎么准备", "时间节点怎么安排"]
+}
+
+### ⑯ 没填过问卷的用户查结果（边界测试，用固定测试账号 test01）
+###    期望：code:0 + msg:"未填写" + filled:false + answer:null
+###    ★ 这是文档特意强调的设计：没填过【不报错】，前端靠 filled 判断跳不跳问卷页
+###    先执行下面这条登录（test01 密码 123456），把返回的 token 粘到 @token2
+POST http://127.0.0.1:5000/api/login
+Content-Type: application/json
+
+{
+  "username": "test01",
+  "password": "123456"
+}
+
+###
+GET http://127.0.0.1:5000/api/answers
+Authorization: Bearer {{token2}}
+
+### ⑰ 查数据库里的问卷（终端操作）
+###    USE futurepath;
+###    SELECT id, user_id, direction, grade, status_json, interest_json FROM answers;
+###    期望：中文是"留学/考研"这种可读文字，而不是 \u8003\u7814 转义码

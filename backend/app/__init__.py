@@ -21,7 +21,9 @@ def create_app():
 
     # 注册路由
     from app.routes.auth import auth_bp
+    from app.routes.survey import survey_bp
     app.register_blueprint(auth_bp)
+    app.register_blueprint(survey_bp)   # 第二阶段：问卷三接口
 
     # 健康检查接口：用于确认后端是否活着
     @app.route("/api/health")
@@ -48,8 +50,12 @@ def create_app():
         }), 500
 
     # 开发期便利：启动时自动建表（生产环境会换成迁移方案）
+    # 注意：表已存在时 create_all 会跳过，所以表结构的最终依据是 backend/init.sql
     with app.app_context():
-        from app.models.user import User  # noqa: F401 确保模型已注册
+        from app.models.chat import ChatLog  # noqa: F401
+        from app.models.case import Case, CaseStep  # noqa: F401
+        from app.models.survey import Answer, Question  # noqa: F401
+        from app.models.user import User  # noqa: F401
         db.create_all()
 
     return app

@@ -5,28 +5,10 @@ from flask import Blueprint, jsonify, request
 
 from app import db
 from app.models.user import User
+# 公共能力统一放在 app/utils.py（第二阶段多个路由文件都要用，见该文件注释）
+from app.utils import TOKENS, current_user, fail
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api")
-
-# 开发期用内存存 token（重启后端会失效，第二周换成更完善的方案）
-TOKENS = {}
-
-
-def fail(code, msg):
-    """统一错误返回格式"""
-    return jsonify({"code": code, "msg": msg, "data": {}})
-
-
-def current_user():
-    """从请求头 Authorization: Bearer <token> 里认人。
-    认得出来就返回 User 对象，认不出来返回 None（调用方自行决定怎么报错）。
-    为什么抽成函数？因为 GET /api/me 和 PUT /api/me 都要用同一套逻辑，
-    抽出来以后只维护一份代码。
-    """
-    token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
-    if not token or token not in TOKENS:
-        return None
-    return User.query.filter_by(username=TOKENS[token]).first()
 
 
 @auth_bp.post("/register")
