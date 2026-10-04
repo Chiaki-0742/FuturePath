@@ -9,13 +9,20 @@
   2. POST 的 user_id 只能从 token 反查，绝不接受前端传（否则能改别人的问卷）
   3. GET 没填过不报错，返回 filled:false —— 这是正常流程，不是错误
 """
+from datetime import datetime, timezone
+
 from flask import Blueprint, jsonify, request
+from sqlalchemy import case as sql_case
 
 from app import db
 from app.models.survey import Answer, Question
-from app.utils import current_user, dumps, fail, loads, ok
+from app.utils import current_user, dumps, fail, loads, ok, text
 
 survey_bp = Blueprint("survey", __name__, url_prefix="/api")
+
+# 题目的分组顺序（对应 C 在《数据库对接说明》里给的
+# ORDER BY FIELD(group_name, 'direction', 'status', 'interest')）
+GROUP_ORDER = {"direction": 0, "status": 1, "interest": 2}
 
 
 def _allowed_options(group_name):
@@ -36,12 +43,21 @@ def _allowed_options(group_name):
 def get_questions():
     """获取全部题目。
 
-    排序：主 order_no（文档要求），次 id。
-    注意 C 的题库里 order_no 是【组内编号】（每组都从 1 开始），所以全局排完
-    是交错的三组——这不影响前端：前端本来就先按 group_name 分组、
-    再在组内按 order_no 排（见 frontend/src/utils/survey.js 的 groupQuestions）。
+    排序严格照 C 给的 SQL（数据库对接说明 4.1）：
+      主序 = 分组固定顺序（方向 → 现状 → 想了解），次序 = 组内 order_no。
+    ★ 为什么不能只按 order_no 全局排？因为 order_no 是【组内编号】
+      （三组都从 1 开始），全局排出来会是 1,1,1,2,2,2... 三组交错。
+      前端的 groupQuestions() 虽然会自己重新分组，但接口输出的顺序本身
+      也是契约的一部分，按文档来才不会被下一个接手的人当成 bug。
     """
-    questions = Question.query.order_by(Question.order_no, Question.id).all()
+    group_order = sql_case(
+        (Question.group_name == "direction", 0),
+        (Question.group_name == "status", 1),
+        (Question.group_name == "interest", 2),
+        else_=99,   # 将来加分组的兜底：排到最后，不至于乱插
+    )
+    questions = (Question.query
+                 .order_by(group_order, Question.order_no, Question.id).all())
     return ok({"list": [q.to_dict() for q in questions]})
 
 
@@ -54,11 +70,11 @@ def submit_answers():
 
     body = request.get_json(silent=True) or {}
 
-    direction = (body.get("direction") or "").strip()
-    grade = str(body.get("grade") or "").strip()
+    direction = text(body.get("direction"))
+    grade = text(body.get("grade"))
     status = body.get("status")
     interest = body.get("interest")
-    extra_note = (body.get("extra_note") or "").strip()
+    extra_note = text(body.get("extra_note"))
 
     # ---- 校验：统一用 1006（问卷格式不对）----
     allowed = _allowed_options("direction")
@@ -84,6 +100,9 @@ def submit_answers():
     ans.status_json = dumps(status)        # 中文不转义，库里能直接读懂
     ans.interest_json = dumps(interest)
     ans.extra_note = extra_note
+    # created_at 在表注释里的定义是「填写时间」，所以覆盖提交要一起刷新，
+    # 否则用户改完问卷，回来看到的时间还是第一次填的，会以为没保存成功。
+    ans.created_at = datetime.now(timezone.utc)
 
     db.session.commit()
     return ok({"id": ans.id}, "提交成功")

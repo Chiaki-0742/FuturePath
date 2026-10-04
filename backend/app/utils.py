@@ -54,6 +54,26 @@ def loads(raw, default):
         return default
 
 
+def text(value):
+    """把请求入参安全地转成"去掉首尾空白的字符串"。
+
+    为什么需要它？前端（或者随手 curl 的人）可能把字段传成数字、null、
+    甚至数组：{'major': 123}、{'name': ['a','b']}。这时直接写
+    (body.get('major') or '').strip() 会抛 AttributeError → 接口 500。
+
+    规则：
+      - 字符串 → 去首尾空白
+      - 数字   → 转成字符串（'123'）
+      - 其他（null / 数组 / 对象 / 布尔）→ 空字符串，
+        让上层的"必填校验"去拒绝它，而不是把 [a, b] 当成姓名存进库
+    """
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return ""
+
+
 def dumps(obj):
     """Python 对象转 JSON 字符串存库。
 

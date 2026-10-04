@@ -13,7 +13,7 @@ from sqlalchemy import case as sql_case
 from app import db
 from app.models.case import Case, CaseStep
 from app.models.survey import Answer
-from app.utils import current_user, fail, ok
+from app.utils import current_user, fail, ok, text
 
 case_bp = Blueprint("case", __name__, url_prefix="/api")
 
@@ -37,8 +37,8 @@ def get_cases():
         return fail(401, "请先登录")
 
     # ---- 参数：没传就用用户自己的问卷结果 ----
-    direction = (request.args.get("direction") or "").strip()
-    grade = (request.args.get("grade") or "").strip()
+    direction = text(request.args.get("direction"))
+    grade = text(request.args.get("grade"))
     # type=int 的好处：传了 "abc" 这种非法值会自动返回默认值，不用自己 try/except
     limit = request.args.get("limit", default=DEFAULT_LIMIT, type=int) or DEFAULT_LIMIT
     limit = max(1, min(limit, MAX_LIMIT))
@@ -54,6 +54,10 @@ def get_cases():
     if not grade and ans:
         grade = ans.grade or ""
 
+    # 排序助手：年级相同的排前面（C 的 SQL 5.2：(grade = %s) DESC, id）。
+    # case(...) 是 SQL 里的条件表达式，同年级=0、不同=1，升序排就成了"同年级优先"。
+    same_grade_first = sql_case((Case.grade == grade, 0), else_=1)
+
     # ---- 三层匹配 ----
     rows = []
     relaxed = False
@@ -64,17 +68,17 @@ def get_cases():
                 .order_by(Case.id).all())
 
     if not rows and direction:
+        # 第 2 层：方向对上就行，年级放宽（文档第 4 步要求的兜底）。
+        # 但放宽不等于乱给 —— 把同年级的案例排到前面，用户的处境更像，
+        # 结果也更有参考价值。这一层不算 relaxed：方向是对的，只是年级放宽了。
         rows = (Case.query
                 .filter_by(direction=direction)
-                .order_by(Case.id).all())
+                .order_by(same_grade_first, Case.id).all())
 
     if not rows:
         # 第 3 层：方向也没有对应的案例，给几条通用的，避免空页面。
-        # 排序上做个小优化：优先给【同年级】的案例（年级相同的人处境更像，
-        # 比随手给几条更贴切）。case(...) 是 SQL 里的条件表达式，
-        # 同年级=0、不同=1，升序排就实现了"同年级优先"。
-        priority = sql_case((Case.grade == grade, 0), else_=1)
-        rows = Case.query.order_by(priority, Case.id).all()
+        # 同样优先给同年级的案例，理由同上。
+        rows = Case.query.order_by(same_grade_first, Case.id).all()
         relaxed = True
 
     total = len(rows)          # 匹配到的总数（截断前）

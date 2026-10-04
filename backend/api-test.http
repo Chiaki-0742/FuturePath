@@ -112,7 +112,8 @@ Content-Type: application/json
 ### ⑩ 获取问卷题目（GET，**不需要登录**）
 ###    期望：code:0 + data.list 共 9 题；
 ###         第1题 options 是数组 ["考研","就业",...] 而不是字符串；
-###         填空题（补充说明）的 options 是空数组 []
+###         填空题（补充说明）的 options 是空数组 []；
+###         分组顺序为 direction → status → interest（连续、不交错）
 GET http://127.0.0.1:5000/api/questions
 
 ### ⑪ 提交问卷答案（POST，需登录）
@@ -258,3 +259,84 @@ Authorization: Bearer {{token}}
 ### ㉔ 不带 token 查案例（期望 code:401 "请先登录"）
 GET http://127.0.0.1:5000/api/cases
 
+### ============================================================
+### 第三段 · 边界与校验（2026-10-04 体检后加固）
+###
+### 下面这几条不是"正常流程"，而是故意拿脏数据去撞接口。
+### 为什么要专门测这些？因为前端可以被绕过 —— 按 F12 打开控制台、
+### 或者用 curl，都能跳过页面直接调接口。所以凡是跟安全和数据完整性
+### 相关的规则，后端必须【自己】有一份实现，不能指望前端拦住。
+### ============================================================
+
+### ㉕ 用户名里带中文（期望 code:1001 "用户名须为3-20位字母或数字"）
+###    ★ 体检发现的漏洞：旧代码用 username.isalnum() 判断，
+###      它是 Unicode 语义，"张三".isalnum() 也返回 True，中文用户名就被放进来了。
+###      现在改成和前端同款正则 ^[a-zA-Z0-9]{3,20}$。
+POST http://127.0.0.1:5000/api/register
+Content-Type: application/json
+
+{
+  "username": "张三",
+  "password": "123456",
+  "name": "测试同学"
+}
+
+### ㉖ 用户名里带下划线（期望 code:1001，同一条规则）
+###    说明：下划线的取舍跟前端对齐过 —— 前端注册页的正则不允许，
+###    后端就也不允许，两边规则必须一模一样。
+POST http://127.0.0.1:5000/api/register
+Content-Type: application/json
+
+{
+  "username": "zhang_san",
+  "password": "123456",
+  "name": "测试同学"
+}
+
+### ㉗ 姓名超长（期望 code:1001 "姓名不能超过64个字符"）
+###    ★ 旧代码这里直接 500：超长撞上 MySQL 的 VARCHAR(64) 严格模式抛异常，
+###      而 debug 模式下 500 返回的是一整页 HTML，前端解析不了，
+###      用户只看到一句"请求失败"。现在提前拦下并给出人话提示。
+###    操作：把 name 换成 100 个汉字（或者随便粘贴一段长文本）
+POST http://127.0.0.1:5000/api/register
+Content-Type: application/json
+
+{
+  "username": "longtest01",
+  "password": "123456",
+  "name": "这里粘贴100个汉字试试看会不会被拦住"
+}
+
+### ㉘ 密码只有 5 位（期望 code:1002 "密码长度需为6-64位"）
+POST http://127.0.0.1:5000/api/register
+Content-Type: application/json
+
+{
+  "username": "shortpw01",
+  "password": "12345",
+  "name": "测试同学"
+}
+
+### ㉙ 问卷题目分组顺序（不需要登录）
+###    期望：list 里的 group_name 依次是 direction → status → interest，不能交错。
+###    ★ 依据是 C 给的 SQL：ORDER BY FIELD(group_name,'direction','status','interest'), order_no
+GET http://127.0.0.1:5000/api/questions
+
+### ㉚ 覆盖提交问卷后「填写时间」会刷新
+###    步骤：① 先点下面这个 POST 提交一次 ② 再点一次
+###          ③ 用上面的 ⑯（GET /api/answers）看 created_at 是不是变了
+###    期望：两次的 created_at 不同（表注释里 created_at 的定义是"填写时间"，
+###          用户改完问卷应该看到新的时间，否则会以为没保存成功）
+POST http://127.0.0.1:5000/api/answers
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "direction": "考研",
+  "grade": "大三",
+  "status": { "major_type": "理工类" },
+  "interest": ["具体怎么准备"],
+  "extra_note": ""
+}
+
+###
