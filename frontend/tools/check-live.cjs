@@ -312,6 +312,18 @@ const bail = (title, lines) => {
     return found
   }
 
+  // 读案例卡片上的方向标签（用来判断"筛完之后是不是全是这个方向"）
+  const caseDirections = async () =>
+    (await evaluate(
+      'Array.from(document.querySelectorAll(".chip--direction")).map(function (e) { return e.innerText.trim() })'
+    )) || []
+
+  // 当前高亮的筛选标签是哪个
+  const activeFilter = async () =>
+    (await evaluate(
+      '(() => { var e = document.querySelector(".filter--on"); return e ? e.innerText.trim() : "" })()'
+    )) || ''
+
   const APP_MARKER = '登录后查看你的个人规划'
 
   // 随机账号名：带时间戳，模拟数据里绝不可能存在
@@ -345,11 +357,10 @@ const bail = (title, lines) => {
   check(hash === '#/survey', '注册成功后先进入问卷页（新手引导）')
   check(text.includes('第 1 步 / 共 3 步'), '问卷页正常渲染（进度显示第几步）')
 
-  // 这一段同时在验证【后端问卷接口还没上线时，前端会不会崩】：
-  //   GET  /api/questions 现在实测是 404  → 题目要能回落到内置题库
-  //   POST /api/answers   现在也是 404   → 提交要能回落到本地保存，不能报错白屏
-  // 等后端把这两个接口做出来（10/03），这段会自动变成"验证真接口"，脚本一个字都不用改。
-  check(text.includes('未来方向'), '接口 404 时题目回落到内置题库（页面没白屏）')
+  // 问卷接口的两种情况这一段都能过：
+  //   接口还没上线 -> 题目回落到内置题库、提交回落到本地保存（页面不白屏）
+  //   接口已上线   -> 直接用后端返回的题目（2026-10-04 已上线，现在走的就是这条）
+  check(text.includes('未来方向'), '问卷题目渲染出来了（接口通了走接口，没通走内置题库）')
 
   check(await clickOption('考研'), '第 1 屏选中「考研」')
   await clickButton('下一步')
@@ -543,6 +554,58 @@ const bail = (title, lines) => {
   check(
     !!profileAfterSave && profileAfterSave.name === newName,
     '刷新页面后显示的还是改后的姓名（数据确实落库了）'
+  )
+
+  // ---------- 9. 案例列表页（真后端） ----------
+  // 这一节是补上的：之前案例接口没上线，没能验证；现在接口通了，
+  // 重点验两件事 —— ① 数据真的来自后端 ② 冷门方向的兜底文案不能说错。
+  section('【9】案例列表页（真后端）：方向筛选 + 冷门方向的兜底')
+  await goto('/cases', 2600)
+  let ctext = await bodyText()
+  let cdirs = await caseDirections()
+  check(cdirs.length > 0, '案例从后端加载出来了（' + cdirs.length + ' 条）')
+  // 这条是"数据确实来自后端"的硬证据：接口若没通，页面会多显示一行
+  // "案例接口还没上线，当前展示的是内置案例库"，不出现就说明 synced = true
+  check(
+    !ctext.includes('案例接口还没上线'),
+    '数据来自后端（没出现"接口还没上线"的降级提示）'
+  )
+  check((await activeFilter()) === '考研', '进页面时按问卷里的方向「考研」筛好了')
+  check(
+    cdirs.length === 3 && cdirs.every((d) => d === '考研'),
+    '筛完 3 条，且【全部】都是考研（当前：' + [...new Set(cdirs)].join(',') + '）'
+  )
+
+  // 手动切一个方向，确认换标签能重新请求后端
+  await goto('/cases?direction=' + encodeURIComponent('保研'), 2600)
+  cdirs = await caseDirections()
+  check(
+    cdirs.length === 1 && cdirs[0] === '保研',
+    '换「保研」筛出 1 条，方向没串（当前 ' + cdirs.length + ' 条）'
+  )
+
+  // 冷门方向「创业」—— 后端三层兜底里最狠的一层，relaxed = true
+  // 这正是后端 review 提到的那条：页面不能说成"共 N 条「创业」的案例"
+  await goto('/cases?direction=' + encodeURIComponent('创业'), 2600)
+  ctext = await bodyText()
+  cdirs = await caseDirections()
+  check((await activeFilter()) === '创业', '「创业」这个方向被保留并选中（没被无声丢掉）')
+  check(ctext.includes('暂时还没有收录案例'), '页面说明了"这个方向还没有收录案例"')
+  check(
+    cdirs.length === 10,
+    '后端放宽后给了其他方向的 ' + cdirs.length + ' 条案例，页面没空着'
+  )
+  check(
+    !cdirs.includes('创业'),
+    '这 10 条里确实没有「创业」（说明后端返回的 relaxed = true 属实）'
+  )
+  check(
+    ctext.includes('共 10 条其他方向的案例'),
+    '统计文案说的是"其他方向"，没写成"共 10 条「创业」的案例"'
+  )
+  check(
+    !/共 \d+ 条「创业」的案例/.test(ctext),
+    '页面上不存在"共 N 条「创业」的案例"这种误导文案（本次修复的验证点）'
   )
 
   // ---------- 汇总 ----------
