@@ -339,4 +339,49 @@ Authorization: Bearer {{token}}
   "extra_note": ""
 }
 
+### ㉛ 补充说明超长（期望 code:1006 "补充说明不能超过500字"）
+###    ★ 为什么要有这条：extra_note / status_json / interest_json 三列都是 TEXT，
+###      超过 65535 字节时 MySQL 严格模式会抛 DataError 1406 → 接口 500，
+###      前端只看到"请求失败"。这是实测翻过的车，所以入口就拦。
+###    操作：把 extra_note 的值粘成一段长文本（超过 500 字）再发
+POST http://127.0.0.1:5000/api/answers
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "direction": "考研",
+  "grade": "大三",
+  "status": { "major_type": "理工类" },
+  "interest": ["具体怎么准备"],
+  "extra_note": "超过五百字的补充说明……（这里粘贴一大段长文本）"
+}
+
+### ㉜ 现状答案内容过长（期望 code:1006 "现状答案内容过长（上限约2000字符）"）
+POST http://127.0.0.1:5000/api/answers
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "direction": "考研",
+  "grade": "大三",
+  "status": { "huge": "这里塞一个超过 2000 字符的字符串" },
+  "interest": ["具体怎么准备"]
+}
+
+### ㉝ 时间字段是本地时间（期望 created_at 与电脑右下角时间一致）
+###    步骤：先发 ㉚ 提交一次，再发下面这个 GET 看 created_at
+###    ★ 踩过的坑：以前写的是 datetime.now(timezone.utc)，存进库比北京时间早 8 小时
+###      （实测 22:27 提交 → 库里 14:27）。现已统一走 utils.now()。
+GET http://127.0.0.1:5000/api/answers
+Authorization: Bearer {{token}}
+
+### ㉞ 不存在的路由（期望 HTTP 404 + JSON {"code":4040}，不是 HTML 报错页）
+###    ★ 前端拦截器按 JSON 解析，拿到 HTML 会直接解析失败，只显示"请求失败"
+GET http://127.0.0.1:5000/api/cases/abc
+Authorization: Bearer {{token}}
+
+### ㉟ 请求方法用错（期望 HTTP 405 + JSON {"code":4050}）
+GET http://127.0.0.1:5000/api/register
+Authorization: Bearer {{token}}
+
 ###

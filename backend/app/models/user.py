@@ -1,9 +1,8 @@
 """users 表模型：一个 User 对象对应数据库 users 表里的一行"""
-from datetime import datetime, timezone
-
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app import db
+from app.utils import now
 
 
 class User(db.Model):
@@ -15,7 +14,7 @@ class User(db.Model):
     name = db.Column(db.String(64), nullable=False)             # 姓名
     major = db.Column(db.String(64), nullable=False, default="未填写")  # 专业
     grade = db.Column(db.String(16), nullable=False, default="未填写")  # 年级
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))  # 注册时间
+    created_at = db.Column(db.DateTime, default=now)  # 注册时间（本机时间，见 utils.now 注释）
 
     def set_password(self, raw_password):
         """把明文密码加密后保存"""

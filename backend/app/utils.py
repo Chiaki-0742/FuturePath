@@ -8,6 +8,7 @@
       - 返回格式只有一份代码，绝不会出现"有的接口返回 code 有的返回 success"
 """
 import json
+from datetime import datetime
 
 from flask import jsonify, request
 
@@ -81,3 +82,21 @@ def dumps(obj):
     在数据库里没法直接看懂（排查问题时很痛苦）。
     """
     return json.dumps(obj, ensure_ascii=False)
+
+
+def now():
+    """全项目唯一的「当前时间」来源。
+
+    ★ 为什么不能用 datetime.now(timezone.utc)？
+      MySQL 的 DATETIME 类型【不存时区】，代码里传什么它就原样存什么。
+      之前写成 UTC，而本机 MySQL 用的是本地时区（SELECT NOW() 返回北京时间），
+      两边差 8 小时 —— 实测：本地 22:27 提交问卷，接口返回的 created_at 是 14:27，
+      用户看到"填写时间"就会以为系统坏了。
+
+    我们三台开发机都在国内、数据库和代码跑在同一台机器上，所以统一取本机时间：
+    与 MySQL 的 NOW()/CURRENT_TIMESTAMP 口径一致，也不会出现"同一个页面两个时间标准"。
+
+    （将来真部署到海外服务器，再统一改成 UTC 存储 + 返回时带时区，
+       那是第二周之后的事，现在不要提前复杂化。）
+    """
+    return datetime.now()

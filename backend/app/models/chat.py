@@ -3,9 +3,8 @@
 节后接大模型时使用。现在先把模型和表准备好，接口可以先返回假数据。
 tokens_used 用于成本监控——能看出谁用得多、花了多少。
 """
-from datetime import datetime, timezone
-
 from app import db
+from app.utils import now
 
 
 class ChatLog(db.Model):
@@ -18,7 +17,7 @@ class ChatLog(db.Model):
     question = db.Column(db.Text, nullable=False)   # 用户问的
     answer = db.Column(db.Text)                     # 模型答的
     tokens_used = db.Column(db.Integer)             # 消耗 token 数（成本监控）
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    created_at = db.Column(db.DateTime, default=now, index=True)   # 提问时间（本机时间）
 
     def to_dict(self):
         return {

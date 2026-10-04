@@ -9,20 +9,28 @@
   2. POST 的 user_id 只能从 token 反查，绝不接受前端传（否则能改别人的问卷）
   3. GET 没填过不报错，返回 filled:false —— 这是正常流程，不是错误
 """
-from datetime import datetime, timezone
-
 from flask import Blueprint, jsonify, request
 from sqlalchemy import case as sql_case
 
 from app import db
 from app.models.survey import Answer, Question
-from app.utils import current_user, dumps, fail, loads, ok, text
+from app.utils import current_user, dumps, fail, loads, now, ok, text
 
 survey_bp = Blueprint("survey", __name__, url_prefix="/api")
 
 # 题目的分组顺序（对应 C 在《数据库对接说明》里给的
 # ORDER BY FIELD(group_name, 'direction', 'status', 'interest')）
 GROUP_ORDER = {"direction": 0, "status": 1, "interest": 2}
+
+# 长文本字段的长度上限。
+# ★ 为什么必须封顶：这三列都是 TEXT（65535 字节），前端一旦传来超长内容
+#   （比如把手滑粘贴的整篇文章塞进补充说明），MySQL 严格模式会直接抛
+#   DataError 1406 → 接口 500，前端只能显示"请求失败"。与其让它炸，
+#   不如在入口就拦下来，回一句人话。实测过 7 万字的提交就是这个下场。
+# 中文一个字占 3 字节，按"字符数"封顶比按字节算安全得多（500 字 ≈ 1500 字节）。
+EXTRA_NOTE_MAX = 500      # 补充说明
+STATUS_MAX = 2000         # 现状答案（序列化成 JSON 后的长度）
+INTEREST_MAX = 500        # 想了解什么（序列化成 JSON 后的长度）
 
 
 def _allowed_options(group_name):
@@ -88,6 +96,16 @@ def submit_answers():
         return fail(1006, "问卷格式不正确")
     if len(interest) > 3:
         return fail(1006, "最多选 3 项")
+    # 长度校验放在类型校验之后：先确认形状对，再看内容是不是塞太多了。
+    # 序列化之后再比 —— 存进库的是 JSON 字符串，要按它的长度算。
+    status_raw = dumps(status)
+    interest_raw = dumps(interest)
+    if len(status_raw) > STATUS_MAX:
+        return fail(1006, f"现状答案内容过长（上限约{STATUS_MAX}字符）")
+    if len(interest_raw) > INTEREST_MAX:
+        return fail(1006, "想了解的方向内容过长")
+    if len(extra_note) > EXTRA_NOTE_MAX:
+        return fail(1006, f"补充说明不能超过{EXTRA_NOTE_MAX}字")
 
     # ---- 存入：先查再改，没有就插（user_id 上有 UNIQUE 索引，直接 add 会撞键）----
     ans = Answer.query.filter_by(user_id=user.id).first()
@@ -97,12 +115,13 @@ def submit_answers():
 
     ans.direction = direction
     ans.grade = grade
-    ans.status_json = dumps(status)        # 中文不转义，库里能直接读懂
-    ans.interest_json = dumps(interest)
+    ans.status_json = status_raw       # 中文不转义，库里能直接读懂
+    ans.interest_json = interest_raw
     ans.extra_note = extra_note
     # created_at 在表注释里的定义是「填写时间」，所以覆盖提交要一起刷新，
     # 否则用户改完问卷，回来看到的时间还是第一次填的，会以为没保存成功。
-    ans.created_at = datetime.now(timezone.utc)
+    # 时间统一走 utils.now()，避免与 MySQL 的 NOW() 差 8 小时（踩过）。
+    ans.created_at = now()
 
     db.session.commit()
     return ok({"id": ans.id}, "提交成功")

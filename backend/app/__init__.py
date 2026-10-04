@@ -51,6 +51,26 @@ def create_app():
             "data": {},
         }), 500
 
+    # 路径写错 / 请求方法不对时，Flask 默认吐一页 HTML。
+    # 前端拦截器是按 JSON 解析的，拿到 HTML 会直接解析失败，
+    # 用户只看到"请求失败"，排查时也分不清是"路径打错"还是"后端没起"。
+    # 所以这两个也要统一成 JSON —— 前端一律按 code 判断。
+    @app.errorhandler(404)
+    def not_found(e):
+        return jsonify({
+            "code": 4040,
+            "msg": "接口不存在，请检查请求路径",
+            "data": {},
+        }), 404
+
+    @app.errorhandler(405)
+    def method_not_allowed(e):
+        return jsonify({
+            "code": 4050,
+            "msg": "请求方法不允许，请检查该接口要用 GET 还是 POST",
+            "data": {},
+        }), 405
+
     # 开发期便利：启动时自动建表（生产环境会换成迁移方案）
     # 注意：表已存在时 create_all 会跳过，所以表结构的最终依据是 backend/init.sql
     with app.app_context():

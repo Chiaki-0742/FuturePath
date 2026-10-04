@@ -4,9 +4,9 @@
 改任何一边都要同步另一边——这是第一周 user/users 不一致踩过的坑。
 """
 import json
-from datetime import datetime, timezone
 
 from app import db
+from app.utils import now
 
 
 class Question(db.Model):
@@ -57,7 +57,7 @@ class Answer(db.Model):
     status_json = db.Column(db.Text)                        # B 组现状答案，JSON
     interest_json = db.Column(db.Text)                      # C 组想了解什么，JSON
     extra_note = db.Column(db.Text)                         # 补充说明
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = db.Column(db.DateTime, default=now)   # 填写时间（本机时间）
 
     def _loads(self, raw, default):
         """JSON 字符串安全转回 Python 对象，解析失败给兜底值"""
