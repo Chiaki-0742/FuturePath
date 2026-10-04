@@ -44,6 +44,12 @@ const routes = [
     meta: { requiresAuth: true, title: '规划问卷' },
   },
   {
+    path: '/cases',
+    name: 'cases',
+    component: () => import('@/views/Cases.vue'),
+    meta: { requiresAuth: true, title: '真实案例' },
+  },
+  {
     path: '/profile',
     name: 'profile',
     component: () => import('@/views/Profile.vue'),

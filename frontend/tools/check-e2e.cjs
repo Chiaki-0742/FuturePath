@@ -308,6 +308,39 @@ function bail(title, lines) {
       '(() => { var el = document.querySelector(".direction"); return el ? el.innerText.trim() : "" })()'
     )) || ''
 
+  // ---- 案例列表页专用 ----
+  //
+  // 读每张卡片右上角那个方向标签的文字。
+  // 这是验证「筛选真的生效」的硬证据 —— 筛完只看"还剩几张"不够，
+  // 必须逐张确认剩下那张的方向就是点的那一个。
+  const caseDirections = async () =>
+    (await evaluate(
+      'Array.from(document.querySelectorAll(".chip--direction")).map(function (e) { return e.innerText.trim() })'
+    )) || []
+
+  // 当前高亮的筛选标签是哪个
+  const activeFilter = async () =>
+    (await evaluate(
+      '(() => { var e = document.querySelector(".filter--on"); return e ? e.innerText.trim() : "" })()'
+    )) || ''
+
+  // 按文字点一个链接（首页的「看同方向的案例」是个 RouterLink，渲染成 <a> 不是 <button>）
+  const clickLink = async (label) => {
+    const found = await evaluate(
+      '(() => {\n' +
+        '  var as = Array.from(document.querySelectorAll("a")).filter(function (a) {\n' +
+        '    return a.offsetParent !== null && a.innerText.replace(/\\s+/g, "") === ' +
+        JSON.stringify(label) +
+        ' })\n' +
+        '  if (!as.length) return false\n' +
+        '  as[0].click()\n' +
+        '  return true\n' +
+        '})()'
+    )
+    await sleep(400)
+    return found
+  }
+
   const APP_MARKER = '登录后查看你的个人规划' // 登录页上的一句固定文案，用来判断页面到底渲染出来没有
 
   const seed = Date.now().toString().slice(-6)
@@ -481,6 +514,89 @@ function bail(title, lines) {
   check(text.includes('账号信息'), '用户资料通过接口加载成功')
   check(text.includes('测试同学'), '资料字段按约定渲染（姓名）')
   check((await directionOnHome()) === '考研', '首页从本地问卷记录里显示出方向')
+
+  // ---------- 4-b. 案例列表页：默认进来能出结果 ----------
+  //
+  // test 这个账号预置的问卷方向是「考研」，所以直接打开 /cases（地址里不带参数）
+  // 应该自动筛到考研 —— "和我情况相近的人怎么走的"，这比默认全量更贴题目。
+  section('【4-b】案例列表页：默认打开就有内容')
+  await goto('/cases')
+  await sleep(2200)
+  text = await bodyText()
+  check(text.includes('真实案例'), '页面正常打开')
+  check((await activeFilter()) === '考研', '按问卷里的方向自动筛好了（默认选中「考研」）')
+
+  let dirs = await caseDirections()
+  check(dirs.length === 3, '案例卡片渲染出来了（「考研」当前 ' + dirs.length + ' 张）')
+  check(
+    dirs.every((d) => d === '考研'),
+    '卡片上的方向标签都是「考研」'
+  )
+  check(text.includes('双非计算机大三考研上岸 211'), '卡片显示标题')
+  check(text.includes('普通一本') && text.includes('理工类'), '卡片显示人物画像')
+  check(text.includes('大三上定校，暑假强化刷题'), '卡片显示概述')
+
+  // ---------- 4-c. 按方向筛选 ----------
+  section('【4-c】案例列表页：按方向筛选')
+  const clickedStudy = await clickButton('留学')
+  await sleep(1400)
+  check(clickedStudy, '点得到「留学」这个筛选标签')
+  check((await activeFilter()) === '留学', '「留学」标签变成选中状态')
+
+  dirs = await caseDirections()
+  check(dirs.length === 2, '筛完只剩 2 条（当前 ' + dirs.length + ' 条）')
+  check(
+    dirs.every((d) => d === '留学'),
+    '筛完之后剩下的案例【全部】都是「留学」方向'
+  )
+
+  // 再换一个方向。只测一次的话，"点完就卡住不再重新筛"这种 bug 测不出来
+  await clickButton('考公')
+  await sleep(1400)
+  dirs = await caseDirections()
+  check(
+    dirs.length === 1 && dirs[0] === '考公',
+    '换成「考公」后只剩那 1 条考公案例（当前 ' + dirs.length + ' 条）'
+  )
+
+  // 点回全部，确认能恢复
+  await clickButton('全部')
+  await sleep(1400)
+  dirs = await caseDirections()
+  check(dirs.length === 10, '点回「全部」后 10 条案例都回来了（当前 ' + dirs.length + ' 条）')
+
+  // ---------- 4-d. 首页的案例入口 ----------
+  section('【4-d】首页 -> 案例列表 的入口')
+  await goto('/')
+  await sleep(2000)
+  const entryOk = await clickLink('看同方向的案例')
+  await sleep(1800)
+  check(entryOk, '首页方向卡片上有「看同方向的案例」入口')
+  check((await currentHash()).indexOf('#/cases') === 0, '点进去到了案例列表页')
+  check((await activeFilter()) === '考研', '带着问卷里的方向进去，列表已经筛好了')
+
+  // ---------- 4-e. 案例表里没有的方向，不能筛出空白页 ----------
+  //
+  // "创业"是问卷第 1 题里能选的选项，但案例表里一条都没有
+  // （已知的数据不一致：问卷有创业、案例有保研，两边对不上）。
+  // 这种时候页面绝对不能空着 —— 空页面看起来就像页面坏了。
+  // 正确做法：保留用户选的方向、说明情况、给出其他方向的案例。
+  section('【4-e】案例列表页：案例表里没有的方向（创业）')
+  await goto('/cases?direction=' + encodeURIComponent('创业'), 2600)
+  text = await bodyText()
+  check((await activeFilter()) === '创业', '用户选的方向被保留并选中（没被无声丢掉）')
+  check(text.includes('暂时还没有收录案例'), '页面上说明了"这个方向还没有收录案例"')
+  dirs = await caseDirections()
+  check(
+    dirs.length === 10,
+    '没有出现空白页，展示的是其他方向的 ' + dirs.length + ' 条案例'
+  )
+  // 统计文案不能说错：这 10 条是"其他方向"的，不能写成"共 10 条「创业」的案例"，
+  // 那样用户会以为案例表里真有 10 条创业案例
+  check(
+    text.includes('共 10 条其他方向的案例'),
+    '统计文案说清了这是"其他方向"的案例，没冒名顶替'
+  )
 
   // ---------- 5. 个人中心 ----------
   section('【5】个人中心（已登录）')

@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { fetchAnswers } from '@/api/survey'
@@ -70,6 +70,21 @@ async function loadSurvey() {
 }
 
 onMounted(load)
+
+/**
+ * 案例入口的目标地址。
+ *
+ * 带上问卷里选的方向，案例列表页打开就直接筛好 —— 用户点了"看同方向的案例"，
+ * 进去却看到一个全部方向的列表，会以为按钮没生效。
+ *
+ * "还没想好"要排除掉：它是问卷里的一个选项，但不是一个真实方向，
+ * 案例表里没有这一类，带过去只会筛出空页面。
+ */
+const caseLink = computed(() => {
+  const d = direction.value
+  if (!d || d === '还没想好') return { name: 'cases' }
+  return { name: 'cases', query: { direction: d } }
+})
 </script>
 
 <template>
@@ -96,7 +111,12 @@ onMounted(load)
         <template v-if="surveyDone">
           <p class="direction">{{ direction || '还没想好' }}</p>
           <p class="card__hint">来自你填的规划问卷。想改的话，随时可以重填</p>
-          <RouterLink to="/survey" class="btn btn--text">重新填写问卷</RouterLink>
+          <div class="card-actions">
+            <RouterLink :to="caseLink" class="btn btn--primary">
+              看同方向的案例
+            </RouterLink>
+            <RouterLink to="/survey" class="btn btn--text">重新填写问卷</RouterLink>
+          </div>
         </template>
 
         <template v-else>
@@ -226,6 +246,15 @@ onMounted(load)
   margin: 28px 0 14px;
   font-size: 16px;
   font-weight: 500;
+}
+
+/* 方向卡片底部的两个动作。主按钮（看案例）放前面，
+   "重新填写问卷"是次要操作，做成文字链接，别跟主按钮抢注意力 */
+.card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
 }
 
 .tiles {
