@@ -26,6 +26,7 @@ from flask import Blueprint, request
 from app import db
 from app.models.chat import ChatLog
 from app.models.survey import Answer
+from app.models.user import User
 from app.utils import current_user, fail, loads, now, ok, text
 
 chat_bp = Blueprint("chat", __name__, url_prefix="/api")
@@ -115,6 +116,10 @@ def fake_answer(question, ans, status, interest):
 def _today_count(user_id):
     """今天（本地日历日）该用户已经提问了几次。
 
+    只读、给 GET /chat/logs 显示"今天还能问几次"用，所以不需要加锁 ——
+    它读到的是"此刻已提交的数量"，差一两条在展示场景下无所谓。
+    ★ 真正把关额度的是 _reserve_quota()，那里才需要锁。
+
     用 created_at 的日期范围来数，而不是把全部记录拉出来在 Python 里数 ——
     记录多了以后（每天 20 条，一个学期就是几千条）那种写法会明显变慢。
     """
@@ -124,6 +129,68 @@ def _today_count(user_id):
         ChatLog.user_id == user_id,
         ChatLog.created_at >= start,
     ).count()
+
+
+def _reserve_quota(user_id, question):
+    """原子地占用一次提问额度。
+
+    返回 ChatLog 对象 = 额度已占，把它的 answer / tokens_used 补上即可；
+    返回 None = 已经超额，调用方该返回 1007。
+
+    ★ 为什么不能写成"先 count 一下、再 insert"？
+      那两步之间有時間差，并发时会互相穿插。
+      实测（2026-10-09）：同时发 25 个请求，25 个都返回"提问成功"，
+      但库里只有 20 条 —— 剩下 5 次白问了：答案没进历史，用户刷新看不到，
+      额度也被白占。真实调用模型时，这 5 次就是真金白银的浪费。
+
+    ★ 这里的做法是【锁 users 表那一行】，而不是锁 chat_logs：
+      MySQL 的行锁（SELECT ... FOR UPDATE）只能锁【已存在的行】。
+      chat_logs 里的行是各自请求刚插的，彼此看不见，所以锁它没用；
+      而 users 表里这个用户一定存在，锁住它就等于给"这个用户的额度检查"
+      排了个队，并发的请求只能一个个进来。
+
+      为什么不锁完就 commit？因为后面还要生成回答。锁的持有时间覆盖
+      "检查额度 → 生成回答 → 落库"整个过程，这个窗口在骨架阶段是毫秒级；
+      接上真实模型后会是几秒到几十秒（网络等待）—— 那时可以考虑改成
+      "先扣额度再异步补答案"的写法，但那是优化，不是现在该做的事。
+    """
+    # with_for_update() 在同一个事务里生效，所以必须先 begin。
+    # SQLAlchemy 2.x 会自动开启事务，这里显式写出来是为了让读代码的人
+    # 一眼看到"锁的边界到哪"。
+    db.session.begin_nested()
+
+    # 锁住这个用户行：并发请求在这里排队
+    db.session.execute(
+        db.select(User).where(User.id == user_id).with_for_update()
+    ).scalar_one()
+
+    current = now()
+    start = datetime(current.year, current.month, current.day)
+    used = (ChatLog.query
+            .filter(ChatLog.user_id == user_id,
+                    ChatLog.created_at >= start)
+            .count())
+
+    if used >= DAILY_LIMIT:
+        db.session.rollback()
+        return None
+
+    # 占位记录：answer 先留空，等真回答生成后再补上。
+    # 先插占位的好处是 —— 如果后面的模型调用抛异常，这一行会跟着回滚，
+    # 用户的额度不会被扣掉（"没得到答案就不该扣费"）。
+    #
+    # ★ 直接把对象返回给调用方，不要让调用方回头"找最新一条 answer=None 的记录"
+    #   —— 同一个用户并发提问时，那样的写法会取到别人的那一行。
+    placeholder = ChatLog(
+        user_id=user_id,
+        question=question,
+        answer=None,
+        tokens_used=None,
+        created_at=current,
+    )
+    db.session.add(placeholder)
+    db.session.commit()
+    return placeholder
 
 
 @chat_bp.post("/chat")
@@ -152,7 +219,10 @@ def post_chat():
         return fail(1001, f"问题不能超过{QUESTION_MAX}字")
 
     # 每日次数上限（成本控制）。放在最后校验，这样"没填问卷"的提示更优先。
-    if _today_count(user.id) >= DAILY_LIMIT:
+    # _reserve_quota 内部会锁住 users 那一行，并发请求不会同时通过这一关
+    # （见该函数注释里的实测数据）。
+    log = _reserve_quota(user.id, question)
+    if log is None:
         return fail(1007, "今日提问次数已用完，明天再来")
 
     status = loads(ans.status_json, {})
@@ -170,19 +240,16 @@ def post_chat():
     #   try:
     #       answer_text, tokens = call_real_model(system_prompt, question)
     #   except Exception:
+    #       db.session.rollback()      # 把占位记录撤掉，别扣用户额度
     #       return fail(2001, "AI 暂时不可用，请稍后再试")   # 不透堆栈给前端
     answer_text = fake_answer(question, ans, status, interest)
     tokens_used = 0            # 骨架阶段没有真实调用，固定 0（含义见下方注释）
 
-    # ---- 落库：每次调用都要有记录，否则事后算不出成本 ----
-    log = ChatLog(
-        user_id=user.id,
-        question=question,
-        answer=answer_text,
-        tokens_used=tokens_used,
-        created_at=now(),
-    )
-    db.session.add(log)
+    # ---- 补完整刚才 _reserve_quota 插入的占位记录 ----
+    # 直接改那一个对象，不新增 —— 否则一次提问会在库里留两行（占位 + 完整），
+    # 历史列表会重复，明天算额度也会多算一次。
+    log.answer = answer_text
+    log.tokens_used = tokens_used
     db.session.commit()
 
     return ok({

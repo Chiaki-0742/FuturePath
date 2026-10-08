@@ -494,5 +494,40 @@ Authorization: Bearer {{token}}
 GET http://127.0.0.1:5000/api/chat
 Authorization: Bearer {{token}}
 
+### ㊼ ★ 额度检查的并发验证（2026-10-09 加）
+###    正常点这个只会提问一次。要复现并发，得开多个终端同时发。
+###    步骤：
+###      1. 先用同一个账号把今天额度用满（重复点 ㊳ 20 次，
+###         或者往 chat_logs 直接插 20 条今天的记录）
+###      2. 开 3-5 个终端，每个终端都执行下面这条 25 次：
+###         for i in $(seq 1 25); do
+###           curl -s -X POST http://127.0.0.1:5000/api/chat \
+###             -H "Content-Type: application/json" \
+###             -H "Authorization: Bearer 你的token" \
+###             -d "{\"question\":\"并发提问$i\"}" &
+###         done; wait
+###      3. 数返回里 code:0 和 code:1007 各多少个，再去查库
+###    期望：code:0 的个数 + code:1007 的个数 = 25，
+###          且 chat_logs 里该用户的行数【恰好 20】（没有多、也没有少）
+###    ★ 修复前的表现：25 个全部返回 code:0，但库里只有 20 条
+###      —— 有 5 次白问了，用户看到成功却刷不出记录，额度也被白占
+POST http://127.0.0.1:5000/api/chat
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "question": "额度用满之后这条应该是 1007"
+}
+
+### ㊽ 查库：确认没有残留的空记录（answer 为 NULL 说明占位没补全）
+###    ★ 正常情况下应该【一条都没有】
+###    如果查出来有 N 条，说明流程被中断在"插占位"和"补答案"之间
+###      （比如模型调用抛了异常），要看看事务回滚是不是写对了
+SELECT id, LEFT(question, 20) AS 问题, IFNULL(tokens_used, 'NULL') AS tokens,
+       IFNULL(created_at, 'NULL') AS 时间
+FROM chat_logs
+WHERE answer IS NULL
+ORDER BY id DESC;
+
 ###
 ###
