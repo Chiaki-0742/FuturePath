@@ -324,6 +324,23 @@ const bail = (title, lines) => {
       '(() => { var e = document.querySelector(".filter--on"); return e ? e.innerText.trim() : "" })()'
     )) || ''
 
+  // 页面【真实发出】的那条 /api/cases 请求的地址（已解码成中文，方便读）。
+  //
+  // 为什么不用"看页面显示什么"来判断参数？因为显示的东西是后端的计算结果，
+  // 中间隔了一层 —— 参数传错过、恰好碰上同样的结果，就看不出来。
+  // 抓请求地址是唯一能直接看到"前端到底把什么发给了后端"的办法。
+  // performance 记录会在页面导航时重置，所以每次 goto 之后读到的都是这一轮的请求。
+  const lastCaseRequest = async () =>
+    (await evaluate(
+      '(() => {\n' +
+        '  var es = performance.getEntriesByType("resource").filter(function (e) {\n' +
+        '    return e.name.indexOf("/api/cases?") >= 0\n' +
+        '  })\n' +
+        '  if (!es.length) return ""\n' +
+        '  try { return decodeURIComponent(es[es.length - 1].name) } catch (e) { return es[es.length - 1].name }\n' +
+        '})()'
+    )) || ''
+
   // ---- 案例详情页专用 ----
   //
   // 点一张案例卡片。整张卡片是个 <a class="case">，里面包着标题/画像/概述，
@@ -449,6 +466,14 @@ const bail = (title, lines) => {
     check(me.data && me.data.username === username, '后端返回的用户名和刚注册的一致')
     check(me.data && me.data.name === realname, '后端存下了注册时填的姓名（' + realname + '）')
     check(me.data && me.data.major === major, '后端存下了注册时填的专业（' + major + '）')
+    // 这条是给【9】锁定前提用的：账号资料里的年级是注册时的默认值「大一」，
+    // 而问卷里填的是「大三」—— 两个值不同，【9】才验得出案例匹配用的是哪一个。
+    // 哪天注册默认值改成「大三」了，这条会先失败，提醒"区分度没了"，
+    // 而不是让【9】悄悄变成永远通过。
+    check(
+      me.data && me.data.grade === '大一',
+      '账号资料里的年级是注册时的「大一」（与问卷里填的「大三」不同）'
+    )
   }
 
   // ---------- 3. 个人中心显示真实资料 ----------
@@ -600,6 +625,18 @@ const bail = (title, lines) => {
   let ctext = await bodyText()
   let cdirs = await caseDirections()
   check(cdirs.length > 0, '案例从后端加载出来了（' + cdirs.length + ' 条）')
+
+  // ★ 本次修复的验证点：匹配用的年级必须取【问卷里填的】，不能取账号资料里的。
+  //   后端 case.py 的"方向+年级"第一层匹配要的就是问卷年级；前端要是把
+  //   user.grade（注册时填的"大一"）传过去，等于用错的值把后端正确的兜底覆盖掉。
+  //   这里直接看页面真实发出的那条请求 —— 比看页面显示什么更硬，
+  //   因为显示是后端算出来的，参数传错也可能碰巧显示对。
+  const caseReq = await lastCaseRequest()
+  check(caseReq.indexOf('/api/cases?') >= 0, '抓到了页面真实发出的案例请求（' + caseReq + '）')
+  // 注意：lastCaseRequest 返回的地址已经 decodeURIComponent 过了，所以这里直接写中文
+  check(caseReq.includes('grade=大三'), '请求里带的年级是【问卷里填的】「大三」')
+  check(!caseReq.includes('grade=大一'), '没有把账号资料里的「大一」传过去（注册时填的那个）')
+  check(caseReq.includes('direction=考研'), '方向也照常按问卷里的「考研」筛（没被这次改动带坏）')
   // 这条是"数据确实来自后端"的硬证据：接口若没通，页面会多显示一行
   // "案例接口还没上线，当前展示的是内置案例库"，不出现就说明 synced = true
   check(

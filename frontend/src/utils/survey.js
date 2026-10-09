@@ -277,3 +277,21 @@ export function surveyDirection(username) {
   if (!record || record.skipped) return ''
   return record.direction || ''
 }
+
+/**
+ * 取问卷里填的年级（"大三"这种）。跳过或没填过时返回空串。
+ *
+ * ⚠️ 这个和账号资料里的 `user.grade` 不是一回事，别混用：
+ *   user.grade       —— 注册时填的，之后不动，可能早就过期了
+ *   answers.grade    —— 问卷里填的（这里读的就是它），是"现在的真实年级"
+ *
+ * 案例页按"方向 + 年级"匹配案例时用的必须是后者：一个注册时填了"大一"、
+ * 现在读大三的人，要看的是大三学长学姐的路线，不是大一时的。
+ * 后端 case.py 里也是这个口径（不传 grade 时它取的就是 answers.grade）——
+ * 前端要是把 user.grade 传过去，等于用错的值把后端正确的兜底覆盖掉了。
+ */
+export function surveyGrade(username) {
+  const record = readSurvey(username)
+  if (!record || record.skipped) return ''
+  return record.grade || ''
+}

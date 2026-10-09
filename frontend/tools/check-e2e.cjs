@@ -308,6 +308,15 @@ function bail(title, lines) {
       '(() => { var el = document.querySelector(".direction"); return el ? el.innerText.trim() : "" })()'
     )) || ''
 
+  // 首页标题旁边那个年级标签（显示的是【账号资料】里的年级，和问卷里的不是一回事）。
+  // 读它是为了把"账号资料里是哪个年级"这个前提【锁定】住 ——
+  // 后面验证案例页按哪个年级匹配时，得先确认这两个值确实不一样，
+  // 否则用例会因为"两个值恰好相同"而变成永远通过。
+  const gradeOnHome = async () =>
+    (await evaluate(
+      '(() => { var el = document.querySelector(".title-tag"); return el ? el.innerText.trim() : "" })()'
+    )) || ''
+
   // ---- 案例列表页专用 ----
   //
   // 读每张卡片右上角那个方向标签的文字。
@@ -322,6 +331,25 @@ function bail(title, lines) {
   const activeFilter = async () =>
     (await evaluate(
       '(() => { var e = document.querySelector(".filter--on"); return e ? e.innerText.trim() : "" })()'
+    )) || ''
+
+  // 第一张案例卡片上的【年级】标签。
+  //
+  // 卡片上那排画像标签是"学校层次 / 专业类型 / 年级 / 成绩水平"混在一起的，
+  // 不能按位置取（数据一变位置就飘），所以用"这个值是不是一个年级"来认。
+  // 用来验证排序用的是哪个年级：传"大二"，第一张就该是"大二"的案例。
+  const firstCardGrade = async () =>
+    (await evaluate(
+      '(() => {\n' +
+        '  var card = document.querySelector("a.case")\n' +
+        '  if (!card) return ""\n' +
+        '  var grades = ["大一", "大二", "大三", "大四", "研究生"]\n' +
+        '  var tags = Array.from(card.querySelectorAll(".chip")).map(function (e) {\n' +
+        '    return e.innerText.trim()\n' +
+        '  })\n' +
+        '  var hit = tags.filter(function (t) { return grades.indexOf(t) >= 0 })\n' +
+        '  return hit.length ? hit[0] : ""\n' +
+        '})()'
     )) || ''
 
   // 按文字点一个链接（首页的「看同方向的案例」是个 RouterLink，渲染成 <a> 不是 <button>）
@@ -542,9 +570,14 @@ function bail(title, lines) {
   await logout()
   // 给 test 预置一份问卷记录，模拟"早就填过问卷的人"。
   // 不预置的话，登录后会先被新手引导带去问卷页，这条用例会误报成失败。
+  //
+  // ⚠️ 这里的 grade 故意写成「大二」，而 test 这个账号的【资料】里是「大一」
+  //    （mock.js 里预置的）。两个值不一样是刻意的 —— 后面的【4-b2】靠这个差值
+  //    验证"案例页按方向+年级匹配时，用的是问卷里的年级，不是注册时填的年级"。
+  //    如果哪天把它们改成一样，那条用例就失去意义了（会变成永远通过）。
   await evaluate(
     'localStorage.setItem("plan_survey_test", JSON.stringify({' +
-      'direction:"考研",grade:"大一",status:{major_type:"理工类"},' +
+      'direction:"考研",grade:"大二",status:{major_type:"理工类"},' +
       'interest:["具体怎么准备"],extra_note:"",created_at:"2026-10-01T00:00:00.000Z"}))'
   )
   await goto('/login')
@@ -562,6 +595,10 @@ function bail(title, lines) {
   check(text.includes('账号信息'), '用户资料通过接口加载成功')
   check(text.includes('测试同学'), '资料字段按约定渲染（姓名）')
   check((await directionOnHome()) === '考研', '首页从本地问卷记录里显示出方向')
+  check(
+    (await gradeOnHome()) === '大一',
+    '首页的年级来自【账号资料】=「大一」（和问卷里预置的「大二」不同，这条锁住前提）'
+  )
 
   // ---------- 4-b. 案例列表页：默认进来能出结果 ----------
   //
@@ -583,6 +620,26 @@ function bail(title, lines) {
   check(text.includes('双非计算机大三考研上岸 211'), '卡片显示标题')
   check(text.includes('普通一本') && text.includes('理工类'), '卡片显示人物画像')
   check(text.includes('大三上定校，暑假强化刷题'), '卡片显示概述')
+
+  // ---------- 4-b2. 匹配用的年级：必须取问卷里的，不能取账号资料里的 ----------
+  //
+  // 后端 case.py 的"方向 + 年级"第一层匹配，要的是【问卷里填的年级】
+  // （一个人注册时填大一、现在读大三，该看的是大三学姐学长的路线）。
+  // 前端要是把账号资料里的 user.grade 传过去，等于用错的值把后端正确的
+  // 兜底覆盖掉 —— 这个坑后端同学 review 时提过好几次。
+  //
+  // 怎么验：让两个值【不一样】，再看列表排序听谁的。
+  //   test 账号资料里是 "大一"，预置的问卷里是 "大二"。
+  //   按问卷年级排 -> 第一张是唯一那条大二案例；
+  //   按账号资料排 -> 第一张会变成那条大一案例。两者结果不同，才验得出来。
+  section('【4-b2】案例列表页：按「问卷里的年级」匹配，不是账号资料的年级')
+  await clickButton('全部')
+  await sleep(1700)
+  const firstGrade = await firstCardGrade()
+  check(
+    firstGrade === '大二',
+    '第一张卡片是「大二」的案例（问卷年级；若取到账号资料的"大一"，这里会变成"大一"）'
+  )
 
   // ---------- 4-c. 按方向筛选 ----------
   section('【4-c】案例列表页：按方向筛选')
@@ -679,6 +736,53 @@ function bail(title, lines) {
     check(isRelaxed(mixed, '创业', false) === false, '后端明确说没放宽 -> 以后端为准')
     check(isRelaxed(allKy, '考研', true) === true, '后端明确说放宽了 -> 以后端为准')
     check(isRelaxed(mixed, '创业', null) === true, '后端没给布尔值（null）-> 前端自己也算得对')
+  }
+
+  // ---------- 4-f2. 年级取数（纯逻辑，不依赖后端） ----------
+  //
+  // 【4-b2】是从页面上验"排序结果听问卷年级的"。这一条更进一步，把取数函数
+  // 单独捞出来，把"填过 / 跳过 / 从没填过"三种情况都验一遍 ——
+  // 后两种在页面上走不到（跳过问卷的人不会进案例页做这个断言）。
+  //
+  // ⚠️ 为什么要放在【页面里】import，而不是像【4-f】那样在 node 里 import？
+  //    survey.js 第一行是 `import { getToken } from './token'`（没写 .js）。
+  //    Vite 能自动补扩展名，Node 的 ESM 不能 —— 在 node 里加载会直接报
+  //    "Cannot find module"。这跟代码好坏无关，纯粹是两个运行时的规矩不同。
+  //    cases.js 能被 node 加载，只是因为它没有 import 任何东西。
+  section('【4-f2】年级取数：问卷里有就用，没有就留空（不瞎编一个）')
+  const gradeCases = await evaluate(
+    '(async () => {\n' +
+      '  const m = await import("/src/utils/survey.js")\n' +
+      '  const set = (u, o) => localStorage.setItem("plan_survey_" + u, JSON.stringify(o))\n' +
+      '  set("gradecase", { direction: "考研", grade: "大二" })\n' +
+      '  set("gradecase2", { direction: "考研", skipped: true })\n' +
+      '  localStorage.removeItem("plan_survey_gradecase3")\n' +
+      '  const out = [\n' +
+      '    ["filled", m.surveyGrade("gradecase")],\n' +
+      '    ["skipped", m.surveyGrade("gradecase2")],\n' +
+      '    ["never", m.surveyGrade("gradecase3")],\n' +
+      '    ["nouser", m.surveyGrade("")],\n' +
+      '  ]\n' +
+      '  localStorage.removeItem("plan_survey_gradecase")\n' +
+      '  localStorage.removeItem("plan_survey_gradecase2")\n' +
+      '  return out\n' +
+      '})().catch((e) => [["error", String(e && e.message)]])'
+  )
+  const gradeMap = {}
+  ;(gradeCases || []).forEach((p) => {
+    gradeMap[p[0]] = p[1]
+  })
+  check(
+    gradeMap.error === undefined,
+    '能加载到年级取数逻辑（utils/survey.js）' + (gradeMap.error ? '：' + gradeMap.error : '')
+  )
+  if (gradeMap.error === undefined) {
+    check(gradeMap.filled === '大二', '填过问卷 -> 取到问卷里填的「大二」')
+    check(gradeMap.skipped === '', '跳过问卷 -> 返回空串（不编一个年级出来）')
+    check(gradeMap.never === '', '从没填过 -> 返回空串')
+    check(gradeMap.nouser === '', '取不到用户名 -> 返回空串（不会读到别人的记录）')
+    // 空串到接口层会被过滤掉（fetchCases 里 `if (grade) params.grade = grade`），
+    // 也就是【不发这个参数】，后端会自己回落到它查到的问卷年级 —— 这条链路是对的。
   }
 
   // ---------- 4-g. 案例详情页 ----------

@@ -9,7 +9,7 @@ import {
   FALLBACK_CASES,
   profileTags,
 } from '@/utils/cases'
-import { surveyDirection } from '@/utils/survey'
+import { surveyDirection, surveyGrade } from '@/utils/survey'
 
 /**
  * 案例列表页（10/03 任务）。
@@ -92,7 +92,14 @@ async function load() {
   try {
     const data = await fetchCases({
       direction: direction.value === ALL_DIRECTIONS ? '' : direction.value,
-      grade: userStore.userInfo?.grade || '',
+      // ⚠️ 这里的年级必须用【问卷里填的】，不能用账号资料里的 user.grade。
+      //    账号资料那个是注册时填的、之后不再变，一个人注册时填"大一"、
+      //    现在读大三，用它去匹配等于拿一年前的信息找案例。
+      //    后端 case.py 的"方向+年级"第一层匹配要的就是问卷年级，
+      //    前端传错的值过去反而会把后端正确的兜底覆盖掉。
+      //    问卷里没有（没填过/跳过了）就传空 —— 空值不发这个参数，
+      //    后端会自动回落到它自己查到的问卷年级。
+      grade: surveyGrade(userStore.userInfo?.username || ''),
       limit: 20,
     })
     result.value = data
