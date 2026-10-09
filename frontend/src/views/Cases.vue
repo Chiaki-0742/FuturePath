@@ -91,7 +91,20 @@ async function load() {
   error.value = ''
   try {
     const data = await fetchCases({
-      direction: direction.value === ALL_DIRECTIONS ? '' : direction.value,
+      // 「全部」要【照原样】发出去，不能转成空串 —— 这条是实测踩出来的坑：
+      //
+      //   后端 case.py 里有一句 `if not direction and ans: direction = ans.direction`，
+      //   意思是"你没告诉我方向，那我就用你问卷里的方向"。所以传空串过去，
+      //   后端会兜底成"考研"，用户点「全部」实际上只看到考研那 3 条 ——
+      //   而页面上没有任何提示，"全部"看起来就只有 3 条。
+      //
+      //   发「全部」两个字过去，后端的"方向+年级"和"仅方向"两层都匹配不到，
+      //   自然落到第 3 层（返回全表），这才是用户点「全部」想要的结果。
+      //   后端给的 relaxed = true 由 isRelaxed() 挡掉（用户没要方向，不存在放宽）。
+      //
+      // ⚠️ 这算前端在借后端的兜底实现自己的需求（后端没有"不筛方向"的正式约定）。
+      //    已经反馈给后端，如果他加了正式参数（比如 all=1），这里换成那个。
+      direction: direction.value,
       // ⚠️ 这里的年级必须用【问卷里填的】，不能用账号资料里的 user.grade。
       //    账号资料那个是注册时填的、之后不再变，一个人注册时填"大一"、
       //    现在读大三，用它去匹配等于拿一年前的信息找案例。
@@ -128,6 +141,41 @@ onMounted(async () => {
 
 const cases = computed(() => result.value.list || [])
 const isEmpty = computed(() => !loading.value && cases.value.length === 0)
+
+/**
+ * 用户问卷里选的是「还没想好」吗？
+ *
+ * 为什么要单独判断：这种人看到的是"全表案例"，和"选了个真实方向但
+ * 一条案例都没有"落到同一段展示逻辑里，但意思完全不同 ——
+ * 一个是"你还没定方向"，一个是"这个方向没收录"。
+ * 不分开的话会显示成「「全部」方向暂时还没有收录案例」，
+ * 因为 initialDirection() 把"还没想好"折成了"全部"。
+ * 那句话既难懂又像是页面坏了（C 在数据变更说明里专门提过）。
+ */
+const isUndecided = computed(
+  () => surveyDirection(userStore.userInfo?.username || '') === '还没想好'
+)
+
+/**
+ * 顶部提示条该不该出现、出现哪一句。
+ *
+ *   ① 'undecided' —— 问卷里选的「还没想好」。这不是"方向没收录"，
+ *      而是"你还没定方向"，所以话术是引导，不是解释。
+ *      ⚠️ 必须同时要求"当前看的是全部"：用户就算问卷选了"还没想好"，
+ *      后来点了「考研」标签，那就该按考研正常显示，别再念叨那句引导。
+ *
+ *   ② 'relaxed' —— 选了个真实方向，但这个方向确实没有案例，
+ *      后端放宽成给别的方向了。要说明情况，免得用户以为筛错了。
+ *
+ * 注意 'undecided' 不能靠 result.relaxed 来判断：为了修"点「全部」只看得到
+ * 自己方向那几条"的问题（见 load() 里的注释），「全部」会把 direction
+ * 原样发给后端，而后端返回的 relaxed 已经被 isRelaxed() 挡掉了。
+ */
+const notice = computed(() => {
+  if (isUndecided.value && direction.value === ALL_DIRECTIONS) return 'undecided'
+  if (result.value.relaxed) return 'relaxed'
+  return ''
+})
 </script>
 
 <template>
@@ -157,9 +205,16 @@ const isEmpty = computed(() => !loading.value && cases.value.length === 0)
       <button class="btn btn--text" @click="load">重试</button>
     </div>
 
-    <!-- 这个方向一条案例都没有，展示的是其他方向的 —— 要说清楚，别让人以为筛错了 -->
-    <div v-if="result.relaxed" class="alert alert--info">
-      「{{ direction }}」方向暂时还没有收录案例，先看看其他方向的同学怎么走
+    <!-- 两种要说清楚的情况，话术不同（判断逻辑见上面 notice 的注释）：
+         ① 还没想好方向 → 引导，不是解释
+         ② 这个方向真没收录 → 解释清楚，并给其他人的路线 -->
+    <div v-if="notice" class="alert alert--info">
+      <template v-if="notice === 'undecided'">
+        先看看大家的选择，再决定自己的路 —— 下面这些同学的情况各不相同，可以多翻几个
+      </template>
+      <template v-else>
+        「{{ direction }}」方向暂时还没有收录案例，先看看其他方向的同学怎么走
+      </template>
     </div>
 
     <!-- 接口还没上线时说明一下，免得以为看到的是真实数据库里的数据 -->
@@ -171,9 +226,11 @@ const isEmpty = computed(() => !loading.value && cases.value.length === 0)
 
     <template v-else>
       <p class="count">
-        共 {{ cases.length }} 条<template
-          v-if="direction !== ALL_DIRECTIONS && !result.relaxed"
-        >「{{ direction }}」的案例</template><template v-else-if="result.relaxed">其他方向的案例</template>
+        共 {{ cases.length }} 条<template v-if="result.relaxed"><template
+          v-if="isUndecided"
+        >来自不同方向的案例</template><template v-else>其他方向的案例</template></template><template
+          v-else-if="direction !== ALL_DIRECTIONS"
+        >「{{ direction }}」的案例</template>
       </p>
 
       <div v-if="isEmpty" class="card">

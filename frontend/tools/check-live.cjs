@@ -649,36 +649,121 @@ const bail = (title, lines) => {
     '筛完 3 条，且【全部】都是考研（当前：' + [...new Set(cdirs)].join(',') + '）'
   )
 
-  // 手动切一个方向，确认换标签能重新请求后端
-  await goto('/cases?direction=' + encodeURIComponent('保研'), 2600)
-  cdirs = await caseDirections()
+  // C 在 2026-10-01 修了那个数据不一致（问卷 A 组加「保研」、案例扩到 18 条、
+  // 6 个方向各 3 条）。分两层验证：
+  //
+  //   ① 页面层：每个方向点进去都得有案例、方向不能串。
+  //      ⚠️ 这里条数会【少于 3】—— 因为页面总会带上问卷里的年级（大三），
+  //      而后端第一层是「方向 + 年级」精确匹配，命中了就不再往下放宽。
+  //      比如「就业」3 条里只有 1 条是大三的，页面就只显示那 1 条 —— 这是设计如此，
+  //      不是 bug。所以页面层只断言"≥1 条且方向一致"（不白页、不串方向）。
+  //
+  //   ② 数据层：确认每个方向真的有 3 条。要看到全部 3 条得绕开"年级"这一层 ——
+  //      传一个案例表里不存在的年级，让第一层落空、落到第二层（只按方向给），
+  //      拿到的就是这个方向的全部案例。这条验的是 C 补的数据到位没有。
+  const LIVE_DIR_NAMES = ['考研', '保研', '就业', '考公', '留学', '创业']
+  const liveDirCounts = []
+  const liveDirProblems = []
+  for (const name of LIVE_DIR_NAMES) {
+    await goto('/cases?direction=' + encodeURIComponent(name), 2500)
+    const liveDs = await caseDirections()
+    liveDirCounts.push(name + ':' + liveDs.length)
+    if (!(liveDs.length >= 1 && liveDs.every((d) => d === name))) {
+      liveDirProblems.push(
+        name + ' 得到 ' + liveDs.length + ' 条[' + [...new Set(liveDs)].join('/') + ']'
+      )
+    }
+  }
   check(
-    cdirs.length === 1 && cdirs[0] === '保研',
-    '换「保研」筛出 1 条，方向没串（当前 ' + cdirs.length + ' 条）'
+    liveDirProblems.length === 0,
+    '6 个方向点进去都有案例、方向不串（页面显示 ' + liveDirCounts.join(' ') + '）' +
+      (liveDirProblems.length ? ' —— 异常：' + liveDirProblems.join('；') : '')
   )
 
-  // 冷门方向「创业」—— 后端三层兜底里最狠的一层，relaxed = true
-  // 这正是后端 review 提到的那条：页面不能说成"共 N 条「创业」的案例"
-  await goto('/cases?direction=' + encodeURIComponent('创业'), 2600)
+  const dirTotals = await evaluate(
+    '(async () => {\n' +
+      '  const token = localStorage.getItem("plan_token")\n' +
+      '  const names = [' +
+      LIVE_DIR_NAMES.map((n) => '"' + n + '"').join(',') +
+      ']\n' +
+      '  const out = []\n' +
+      '  for (const n of names) {\n' +
+      '    const r = await fetch("/api/cases?direction=" + encodeURIComponent(n) + "&grade=__none__&limit=50", {\n' +
+      '      headers: { Authorization: "Bearer " + token }\n' +
+      '    })\n' +
+      '    const j = await r.json()\n' +
+      '    out.push(n + ":" + ((j.data && j.data.list) ? j.data.list.length : -1))\n' +
+      '  }\n' +
+      '  return out.join(" ")\n' +
+      '})()'
+  )
+  check(
+    dirTotals === LIVE_DIR_NAMES.map((n) => n + ':3').join(' '),
+    '每个方向确实各有 3 条案例（C 补的数据到位了）：' + dirTotals
+  )
+
+  // ★ 「全部」必须真的是全部 —— 这条是 2026-10-09 实测发现的坑：
+  //   前端以前点「全部」是传空的 direction，而后端 case.py 有一句
+  //   `if not direction and ans: direction = ans.direction`（"你没说方向就用你问卷里的"），
+  //   于是用户点「全部」只看到自己方向的 3 条，页面上还什么提示都没有 ——
+  //   "全部"看起来就真的只有 3 条。修法是把「全部」原样发给后端。
+  await goto('/cases', 2600)
+  await evaluate(
+    '(() => { var b = Array.from(document.querySelectorAll(".filter")).find(function (x) ' +
+      '{ return x.innerText.trim() === "全部" }); if (b) b.click(); return !!b })()'
+  )
+  await sleep(2500)
+  const allDirs = await caseDirections()
+  check(
+    allDirs.length === 18,
+    '点「全部」看到的是全部 18 条，不是只有自己方向那几条（当前 ' + allDirs.length + ' 条）'
+  )
+  ctext = await bodyText()
+  check(
+    !ctext.includes('暂时还没有收录案例'),
+    '点「全部」不会冒出"「全部」方向暂时还没有收录案例"这种读不通的话'
+  )
+
+  // ---- 「还没想好」：relaxed 分支里最特殊的一种 ----
+  //
+  // 问卷里选「还没想好」的人，他不是"这个方向没收录"，而是"还没定方向"。
+  // 后端会返回通用案例 + relaxed = true。页面必须说人话
+  // （「先看看大家的选择，再决定自己的路」），
+  // 而不是因为"还没想好"被折成了"全部"，显示成
+  // 「「全部」方向暂时还没有收录案例」——那句话读不通，像是页面坏了。
+  //
+  // 怎么造出这个状态：用接口重新提交一份 direction = 还没想好 的问卷
+  // （一个用户只有一份问卷，重复提交会覆盖），本地记录也同步改掉。
+  await evaluate(
+    '(async () => {\n' +
+      '  const token = localStorage.getItem("plan_token")\n' +
+      '  const body = {\n' +
+      '    direction: "还没想好", grade: "大三",\n' +
+      '    status: { major_type: "理工类", school_level: "普通一本", score: "前30%", english: "已过六级", experience: ["实习"] },\n' +
+      '    interest: ["具体怎么准备"], extra_note: ""\n' +
+      '  }\n' +
+      '  const r = await fetch("/api/answers", {\n' +
+      '    method: "POST",\n' +
+      '    headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },\n' +
+      '    body: JSON.stringify(body)\n' +
+      '  })\n' +
+      '  localStorage.setItem("plan_survey_' +
+      username +
+      '", JSON.stringify({ direction: "还没想好", grade: "大三" }))\n' +
+      '  return r.status\n' +
+      '})()'
+  )
+  await goto('/cases', 2600)
   ctext = await bodyText()
   cdirs = await caseDirections()
-  check((await activeFilter()) === '创业', '「创业」这个方向被保留并选中（没被无声丢掉）')
-  check(ctext.includes('暂时还没有收录案例'), '页面说明了"这个方向还没有收录案例"')
+  check(cdirs.length > 0, '「还没想好」也有案例可看（' + cdirs.length + ' 条，没有白页）')
   check(
-    cdirs.length === 10,
-    '后端放宽后给了其他方向的 ' + cdirs.length + ' 条案例，页面没空着'
+    ctext.includes('先看看大家的选择'),
+    '看到的是"先看看大家的选择，再决定自己的路"这句引导'
   )
   check(
-    !cdirs.includes('创业'),
-    '这 10 条里确实没有「创业」（说明后端返回的 relaxed = true 属实）'
-  )
-  check(
-    ctext.includes('共 10 条其他方向的案例'),
-    '统计文案说的是"其他方向"，没写成"共 10 条「创业」的案例"'
-  )
-  check(
-    !/共 \d+ 条「创业」的案例/.test(ctext),
-    '页面上不存在"共 N 条「创业」的案例"这种误导文案（本次修复的验证点）'
+    !ctext.includes('「全部」方向暂时还没有收录案例'),
+    '没有出现"「全部」方向暂时还没有收录案例"这种读不通的话'
   )
 
   // ---------- 10. 案例详情页（真后端） ----------

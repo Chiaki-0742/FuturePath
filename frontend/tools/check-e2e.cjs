@@ -642,6 +642,11 @@ function bail(title, lines) {
   )
 
   // ---------- 4-c. 按方向筛选 ----------
+  // 本地案例库的总条数（= init.sql 第 10 步的 18 条，6 个方向各 3 条）。
+  // 故意写死：数量对不上时要让用例失败提醒，而不是顺手放过。
+  // 改数据（init.sql + 重跑 gen-fallback-data.py）之后，这里要跟着改。
+  const TOTAL_CASES = 18
+
   section('【4-c】案例列表页：按方向筛选')
   const clickedStudy = await clickButton('留学')
   await sleep(1400)
@@ -649,7 +654,7 @@ function bail(title, lines) {
   check((await activeFilter()) === '留学', '「留学」标签变成选中状态')
 
   dirs = await caseDirections()
-  check(dirs.length === 2, '筛完只剩 2 条（当前 ' + dirs.length + ' 条）')
+  check(dirs.length === 3, '筛完只剩 3 条（当前 ' + dirs.length + ' 条）')
   check(
     dirs.every((d) => d === '留学'),
     '筛完之后剩下的案例【全部】都是「留学」方向'
@@ -660,15 +665,40 @@ function bail(title, lines) {
   await sleep(1400)
   dirs = await caseDirections()
   check(
-    dirs.length === 1 && dirs[0] === '考公',
-    '换成「考公」后只剩那 1 条考公案例（当前 ' + dirs.length + ' 条）'
+    dirs.length === 3 && dirs.every((d) => d === '考公'),
+    '换成「考公」后 3 条全是考公（当前 ' + dirs.length + ' 条）'
+  )
+
+  // 6 个方向逐个点一遍。
+  // 这同时验证了 C 在 2026-10-01 修的那个数据问题：以前「创业」0 条、
+  // 问卷里选不到「保研」，现在每个方向都必须能筛出 3 条 ——
+  // 任何一个方向筛出 0 条，用户点进去就是白页。
+  const ALL_DIR_NAMES = ['考研', '保研', '就业', '考公', '留学', '创业']
+  const dirProblems = []
+  for (const name of ALL_DIR_NAMES) {
+    await clickButton(name)
+    await sleep(1300)
+    const ds = await caseDirections()
+    if (!(ds.length === 3 && ds.every((d) => d === name))) {
+      dirProblems.push(
+        name + ' 得到 ' + ds.length + ' 条[' + [...new Set(ds)].join('/') + ']'
+      )
+    }
+  }
+  check(
+    dirProblems.length === 0,
+    '6 个方向各能筛出 3 条、方向不串' +
+      (dirProblems.length ? ' —— 异常：' + dirProblems.join('；') : '')
   )
 
   // 点回全部，确认能恢复
   await clickButton('全部')
   await sleep(1400)
   dirs = await caseDirections()
-  check(dirs.length === 10, '点回「全部」后 10 条案例都回来了（当前 ' + dirs.length + ' 条）')
+  check(
+    dirs.length === TOTAL_CASES,
+    '点回「全部」后 ' + TOTAL_CASES + ' 条案例都回来了（当前 ' + dirs.length + ' 条）'
+  )
 
   // ---------- 4-d. 首页的案例入口 ----------
   section('【4-d】首页 -> 案例列表 的入口')
@@ -680,27 +710,34 @@ function bail(title, lines) {
   check((await currentHash()).indexOf('#/cases') === 0, '点进去到了案例列表页')
   check((await activeFilter()) === '考研', '带着问卷里的方向进去，列表已经筛好了')
 
-  // ---------- 4-e. 案例表里没有的方向，不能筛出空白页 ----------
+  // ---------- 4-e. 「还没想好」不能筛出空白页 ----------
   //
-  // "创业"是问卷第 1 题里能选的选项，但案例表里一条都没有
-  // （已知的数据不一致：问卷有创业、案例有保研，两边对不上）。
-  // 这种时候页面绝对不能空着 —— 空页面看起来就像页面坏了。
-  // 正确做法：保留用户选的方向、说明情况、给出其他方向的案例。
-  section('【4-e】案例列表页：案例表里没有的方向（创业）')
-  await goto('/cases?direction=' + encodeURIComponent('创业'), 2600)
+  // 「还没想好」是问卷第 1 题里的一个选项，但它【不是】一个真实方向 ——
+  // 用户的意思是"我还没定"。C 明确说不给它配案例（硬塞等于系统替用户做选择），
+  // 所以它会走到后端的第 3 层兜底（给一批通用案例 + relaxed）。
+  //
+  // 这里要守两件事：
+  //   ① 页面不能空着
+  //   ② 不能说一句读不通的话 —— 比如「「全部」方向暂时还没有收录案例」。
+  //      因为「还没想好」会被折成"全部"，照搬另一套文案就会变成这句怪话。
+  //
+  // 注：以前这里测的是「创业」，因为那时案例表里 0 条创业案例；
+  //     C 在 2026-10-01 补了 3 条，所以冷门方向的角色换成了「还没想好」。
+  section('【4-e】案例列表页：「还没想好」不能筛出空白页')
+  await goto('/cases?direction=' + encodeURIComponent('还没想好'), 2600)
   text = await bodyText()
-  check((await activeFilter()) === '创业', '用户选的方向被保留并选中（没被无声丢掉）')
-  check(text.includes('暂时还没有收录案例'), '页面上说明了"这个方向还没有收录案例"')
+  check(
+    (await activeFilter()) === '全部',
+    '「还没想好」不是真实方向，不拿它当筛选条件（标签停在「全部」）'
+  )
   dirs = await caseDirections()
   check(
-    dirs.length === 10,
-    '没有出现空白页，展示的是其他方向的 ' + dirs.length + ' 条案例'
+    dirs.length === TOTAL_CASES,
+    '没有出现空白页，展示的是全部 ' + dirs.length + ' 条案例'
   )
-  // 统计文案不能说错：这 10 条是"其他方向"的，不能写成"共 10 条「创业」的案例"，
-  // 那样用户会以为案例表里真有 10 条创业案例
   check(
-    text.includes('共 10 条其他方向的案例'),
-    '统计文案说清了这是"其他方向"的案例，没冒名顶替'
+    !text.includes('「全部」方向暂时还没有收录案例'),
+    '不会显示"「全部」方向暂时还没有收录案例"这种读不通的话'
   )
 
   // ---------- 4-f. relaxed 判断（纯逻辑，不依赖后端） ----------
@@ -736,6 +773,14 @@ function bail(title, lines) {
     check(isRelaxed(mixed, '创业', false) === false, '后端明确说没放宽 -> 以后端为准')
     check(isRelaxed(allKy, '考研', true) === true, '后端明确说放宽了 -> 以后端为准')
     check(isRelaxed(mixed, '创业', null) === true, '后端没给布尔值（null）-> 前端自己也算得对')
+    // 用户点「全部」时前端会把「全部」原样发给后端（为了绕开"后端拿问卷方向兜底"
+    // 导致"全部"只看得到自己方向那几条的问题），后端会返回 relaxed = true。
+    // 但用户压根没要方向，这个 true 必须被挡住，否则页面会冒出一句
+    // 「「全部」方向暂时还没有收录案例」——读不通。
+    check(
+      isRelaxed(mixed, '全部', true) === false,
+      '用户点「全部」时不采信后端的 relaxed（用户没要方向，不存在"放宽"）'
+    )
   }
 
   // ---------- 4-f2. 年级取数（纯逻辑，不依赖后端） ----------
