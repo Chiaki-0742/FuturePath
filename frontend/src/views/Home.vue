@@ -115,6 +115,7 @@ const caseLink = computed(() => {
             <RouterLink :to="caseLink" class="btn btn--primary">
               看同方向的案例
             </RouterLink>
+            <RouterLink to="/chat" class="btn">问问 AI</RouterLink>
             <RouterLink to="/survey" class="btn btn--text">重新填写问卷</RouterLink>
           </div>
         </template>

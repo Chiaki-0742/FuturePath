@@ -61,7 +61,14 @@ request.interceptors.response.use(
       window.location.hash = '#/login'
     }
 
-    return Promise.reject(new Error(body.msg || '请求失败'))
+    // 把后端的 code 挂在错误对象上一起抛出去。
+    // 为什么需要它：光有 msg 的话，页面只知道"失败了"，
+    // 没法区分「你还没填问卷(1005)」「今天问完了(1007)」「AI 暂时挂了(2001)」——
+    // 这三种该给用户的引导完全不同（去填问卷 / 明天再来 / 稍后重试）。
+    // 这是【追加】一个字段，不改动 msg，所以其他只用 e.message 的页面不受影响。
+    const err = new Error(body.msg || '请求失败')
+    err.code = body.code
+    return Promise.reject(err)
   },
 
   (error) => {

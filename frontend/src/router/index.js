@@ -44,6 +44,12 @@ const routes = [
     meta: { requiresAuth: true, title: '规划问卷' },
   },
   {
+    path: '/chat',
+    name: 'chat',
+    component: () => import('@/views/Chat.vue'),
+    meta: { requiresAuth: true, title: '问问 AI' },
+  },
+  {
     path: '/cases',
     name: 'cases',
     component: () => import('@/views/Cases.vue'),

@@ -34,6 +34,7 @@ onMounted(() => {
           <template v-if="isLoggedIn">
             <RouterLink to="/" class="nav__link">首页</RouterLink>
             <RouterLink to="/cases" class="nav__link">案例</RouterLink>
+            <RouterLink to="/chat" class="nav__link">问问 AI</RouterLink>
             <RouterLink to="/profile" class="nav__link">个人中心</RouterLink>
             <button class="btn btn--text" @click="handleLogout">退出登录</button>
           </template>
