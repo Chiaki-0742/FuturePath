@@ -4,8 +4,13 @@
     GET  /api/chat/logs   我的提问记录（需登录）
 
 ★ 这一层和前面两层最大的区别：前 5 个接口都不依赖任何外部服务、不花钱，
-  这个接口要用大模型 API。所以现在先做"骨架"——把该做的都做了，只把
-  「真的去调模型」这一步替换成假数据，节后拿到 API key 只改一个函数即可。
+  这个接口要用大模型 API。现在接的是【智谱 GLM】（open.bigmodel.cn）。
+
+【两种模式，靠 .env 自动切换 —— 这是刻意留的降级】
+  配了 LLM_API_KEY  → 真的去调模型，返回里 data.mock = false
+  没配 key（比如组员本地没建 .env）→ 退回骨架的固定文案，data.mock = true
+  这样"手上没 key 的组员"也能把整条链路跑通、能跑自检脚本，
+  不会因为一个人没 key 就卡住全队的联调。
 
 【为什么一定要把问卷拼进 prompt】（文档 3.6 节反复强调的点）
   如果只是把用户的问题原样转发给模型，那所有人问"我该考研还是就业"，
@@ -19,9 +24,12 @@
   3. 每次调用都落库（含 tokens_used），否则事后没法算成本
   4. 模型异常统一返回 2001，不把异常堆栈透给前端
 """
+import json
+import urllib.error
+import urllib.request
 from datetime import datetime
 
-from flask import Blueprint, request
+from flask import Blueprint, current_app, request
 
 from app import db
 from app.models.chat import ChatLog
@@ -37,6 +45,25 @@ QUESTION_MAX = 500         # 问题长度上限。question 是 TEXT 列，不封
 DAILY_LIMIT = 20            # 每日提问次数上限，超了返回 1007（文档建议值）
 LOG_PAGE_SIZE = 20          # GET /chat/logs 默认返回条数
 LOG_MAX_SIZE = 50           # GET /chat/logs 上限，防一次拉太多
+
+# ---- 大模型相关（真正会花钱的部分，参数都放这里）----
+LLM_TIMEOUT = 45            # 单次请求最多等几秒。超时按"AI 暂时不可用"处理，
+                            # 不能让一个卡住的请求把后端线程一直占着
+LLM_MAX_TOKENS = 800        # 回答长度上限。system prompt 里要求"300 字以内"，
+                            # 中文 300 字约 400-500 token，留一倍余量。
+                            # 不封顶的后果：模型偶尔会"展开讲讲"，一次几千 token
+DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+DEFAULT_MODEL = "glm-4.5-air"       # .env 里没写 LLM_MODEL 时的兜底。
+                                    # ⚠️ 别随手换成 glm-5.3-flash / glm-4.7 这类"先想再答"的
+                                    # 推理模型：它们会把 800 token 全花在思考上，正文一个字
+                                    # 都没写就结束了，接口拿到的是空字符串（2026-10-14 实测）。
+                                    # 要用它们得把 LLM_MAX_TOKENS 提到 3000 以上。
+
+# 直连，不走系统代理。
+# 本机的终端环境里可能被注入 http_proxy / https_proxy（端口每次会话都变），
+# urllib 默认会读这两个变量，实测反而容易把国内接口的请求卡住 ——
+# 所以这里显式声明"不要代理"。
+_llm_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def build_system_prompt(user, ans, status, interest):
@@ -89,14 +116,17 @@ def build_system_prompt(user, ans, status, interest):
 
 
 def fake_answer(question, ans, status, interest):
-    """假回答 —— 返回固定文案，只把用户的画像填进去。
+    """骨架回答 —— 固定文案，只把用户的画像填进去。
 
-    ★ 它的作用不是"骗人"，而是让整条链路（鉴权 → 校验 → 拼 prompt →
-      落库 → 前端展示）先跑通并能被测试。等 API key 批下来，把这个函数
-      换成真实的 HTTP 调用，接口的入参、校验、落库都不用动。
+    ★ 它现在的身份是【降级方案】，不再是"等 key 的占位"：
+      没配 LLM_API_KEY（例如组员本地没建 .env）时，接口回落到这里，
+      整条链路（鉴权 → 校验 → 拼 prompt → 落库 → 前端展示）照样跑得通，
+      返回里 mock = true，前端会显示"演示模式"。
+      这样"手上没 key 的人"不会卡住全队的联调、自检和截图。
 
-    注意：这里不返回 tokens_used=0，那样在成本统计里会跟"真的调了模型
-      但没记录"混淆。骨架阶段给 0 并在文档里写明"未真实调用"。
+    ★ 有一点要留意：它没有真实调用，所以 tokens_used 固定为 0。
+      不要写成 -1 之类的"特殊值"——那样在成本统计里会跟
+      "真的调了模型但没记录"混淆。
     """
     grade = ans.grade or "大学阶段"
     direction = ans.direction or "还没想好"
@@ -111,6 +141,106 @@ def fake_answer(question, ans, status, interest):
         f"「需要准备什么」「什么时候开始」「怎么检验进度」三栏，"
         f"每栏填 2-3 条，贴在桌前。"
     )
+
+
+class LLMError(Exception):
+    """大模型这一侧出问题：网络不通 / key 失效 / 余额不足 / 超时 / 返回结构异常。
+
+    ★ 为什么要单独定义一个异常类型，而不是 catch Exception？
+      如果 `except Exception` 一把抓，那么代码 bug（比如变量名写错、
+      少了个参数）也会被当成"AI 不可用"，然后在页面上显示一句
+      "AI 暂时不可用，请稍后再试" —— 你永远查不到真正的原因。
+      只接住这一类，其余异常该 500 就 500，日志里能看到堆栈。
+    """
+
+
+def llm_config():
+    """读出 .env 里的三项配置，返回 (key, base_url, model)。
+
+    key 为空 = 没配（组员本地没建 .env），调用方据此退回骨架模式。
+    base_url / model 没写就用默认值，省得组员只填了 key 结果报 404。
+    """
+    key = (current_app.config.get("LLM_API_KEY") or "").strip()
+    base_url = (current_app.config.get("LLM_BASE_URL") or "").strip().rstrip("/")
+    model = (current_app.config.get("LLM_MODEL") or "").strip()
+    return key, base_url or DEFAULT_BASE_URL, model or DEFAULT_MODEL
+
+
+def call_real_model(system_prompt, question):
+    """真的去问大模型，返回 (回答文字, 消耗的 token 数)。
+
+    ★ 为什么用标准库 urllib，而不是requests？
+      后端 venv 里没有装 requests（只有 Flask / flask-cors / PyMySQL /
+      python-dotenv）。为了调一个 HTTP 接口就让全体组员重跑一次
+      pip install，成本比收益大；urllib 是 Python 自带的，够用。
+
+    ★ 为什么 system prompt 要单独发，而不是拼进用户那句话里？
+      模型的角色设定放在 system 里更"压得住"：用户后面再怎么问，
+      那套"针对这个人的画像、300 字以内、别编数据"的要求都还在。
+      拼成一句话发过去，用户一句"忽略前面"就可能把它带跑。
+    """
+    key, base_url, model = llm_config()
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+        ],
+        "temperature": 0.6,          # 略低于默认：要的是稳定、可复现的建议
+        "max_tokens": LLM_MAX_TOKENS,
+    }
+
+    req = urllib.request.Request(
+        base_url + "/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+    )
+    req.add_header("Authorization", "Bearer " + key)
+    req.add_header("Content-Type", "application/json")
+
+    try:
+        with _llm_opener.open(req, timeout=LLM_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # 平台明确回了个错误（401 key 失效 / 429 限流 / 402 余额不足…）
+        # 原文只写进后端日志，不给前端 —— 前端只该看到一句人话。
+        detail = e.read().decode("utf-8", "replace")[:300]
+        current_app.logger.warning("大模型返回 HTTP %s：%s", e.code, detail)
+        raise LLMError("AI 暂时不可用，请稍后再试")
+    except Exception as e:
+        # 超时、DNS 不通、连接被断等，都归到这一类
+        current_app.logger.warning("大模型调用失败：%s: %s", type(e).__name__, e)
+        raise LLMError("AI 暂时不可用，请稍后再试")
+
+    # 解析要防御性写：平台偶发抖动时可能返回结构不全的 JSON。
+    # 直接 data["choices"][0]... 一旦 KeyError，报出来的错会让人以为是代码 bug。
+    try:
+        choice = data["choices"][0]
+        answer = (choice["message"].get("content") or "").strip()
+        tokens = int(data.get("usage", {}).get("total_tokens") or 0)
+    except (KeyError, IndexError, TypeError, ValueError):
+        current_app.logger.warning("大模型返回结构异常：%s", str(data)[:300])
+        raise LLMError("AI 返回内容异常，请稍后再试")
+
+    if not answer:
+        # ★ 这个分支 2026-10-14 踩过，原因很反直觉，日志里写清楚省得下次再查：
+        #   智谱的部分型号（glm-5.3-flash / glm-4.7 / glm-4.6 / glm-5-turbo）
+        #   是"先想再答"的推理模型 —— 它先把思考过程写进 reasoning_content，
+        #   思考本身就吃掉了几百上千 token。LLM_MAX_TOKENS 只给 800 的话，
+        #   额度在"想"的阶段就用完了（finish_reason=length），
+        #   正式答案一个字都没写，content 是空的。
+        #   实测：同一个问题 glm-4.5-air 3.7 秒 / 350 token 直接给答案，
+        #         glm-4.7 想了 800 token 还是空。
+        #   → 换 .env 里的 LLM_MODEL 为 glm-4.5-air，或把 LLM_MAX_TOKENS 提到 3000+。
+        detail = data.get("usage", {}).get("completion_tokens_details", {})
+        current_app.logger.warning(
+            "大模型没返回正文：finish_reason=%s，思考用了 %s token（当前上限 %s）。"
+            "多为推理模型额度被思考耗尽，建议换 LLM_MODEL 或调大 LLM_MAX_TOKENS。",
+            choice.get("finish_reason"), detail.get("reasoning_tokens"), LLM_MAX_TOKENS)
+        raise LLMError("AI 没有返回内容，换个问法再试试")
+
+    return answer, tokens
 
 
 def _today_count(user_id):
@@ -236,14 +366,30 @@ def post_chat():
     system_prompt = build_system_prompt(user, ans, status, interest)
 
     # ---- 生成回答 ----
-    # ★ 节后换真模型时，只改这一段：
-    #   try:
-    #       answer_text, tokens = call_real_model(system_prompt, question)
-    #   except Exception:
-    #       db.session.rollback()      # 把占位记录撤掉，别扣用户额度
-    #       return fail(2001, "AI 暂时不可用，请稍后再试")   # 不透堆栈给前端
-    answer_text = fake_answer(question, ans, status, interest)
-    tokens_used = 0            # 骨架阶段没有真实调用，固定 0（含义见下方注释）
+    # 两种模式在这里分岔（见文件开头的说明）：配了 key 就真调，没配就走骨架。
+    api_key, _base_url, model = llm_config()
+
+    if not api_key:
+        # 骨架模式：入参、校验、落库全都一样，只是回答是固定文案。
+        # 组员本地没配 .env 时走这条，前端靠 data.mock 显示"演示模式"。
+        answer_text = fake_answer(question, ans, status, interest)
+        tokens_used = 0        # 没有真实调用就固定 0（不要用 -1 之类的怪值，
+                               # 免得成本统计把它当成"调用过但没记上"）
+        is_mock = True
+    else:
+        try:
+            answer_text, tokens_used = call_real_model(system_prompt, question)
+        except LLMError as e:
+            # ★ 失败时必须【显式删掉】那条占位记录，不能只 db.session.rollback()：
+            #   _reserve_quota() 内部已经 commit 过一次（"先占额度"是为了防并发超发），
+            #   那次提交已经把事务结束掉了 —— 现在再 rollback 撤的是当前这个空事务，
+            #   占位记录照样躺在库里，结果是：用户额度被白扣一次，
+            #   历史列表里还会多出一条没有答案的空记录。
+            #   （2026-10-09 那次 25 并发留下 5 条"白问"，就是这个毛病。）
+            db.session.delete(log)
+            db.session.commit()
+            return fail(2001, str(e))     # 只给一句人话，不透堆栈给前端
+        is_mock = False
 
     # ---- 补完整刚才 _reserve_quota 插入的占位记录 ----
     # 直接改那一个对象，不新增 —— 否则一次提问会在库里留两行（占位 + 完整），
@@ -255,10 +401,12 @@ def post_chat():
     return ok({
         "answer": answer_text,
         "tokens_used": tokens_used,
-        # 下面两个字段文档里没有，但它们能解释"为什么每次回答长得一样"，
-        # 前端可以在页面上显示一小行灰字（如"演示模式"）。
-        # 等接上真模型后，把 mock 改成 False 即可，不用改前端。
-        "mock": True,
+        # mock 现在是真实值了：配了 key 走了模型 = false，没配 = true。
+        # 前端拿它显示一小行灰字（如"演示模式"），前端代码不用改。
+        "mock": is_mock,
+        # 模型名给页面用，可以在角落显示"由 glm-5.3-flash 生成"；
+        # 骨架模式下是空串。文档里没有这个字段，是附加的，不影响老前端。
+        "model": "" if is_mock else model,
         "system_prompt": system_prompt,
     })
 
