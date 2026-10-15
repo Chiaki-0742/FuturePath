@@ -81,5 +81,56 @@ def create_app():
         from app.models.survey import Answer, Question  # noqa: F401
         from app.models.user import User  # noqa: F401
         db.create_all()
+        _ensure_columns()
 
     return app
+
+
+# ---------------------------------------------------------------
+# 轻量「补列」：给已经建好的老表补上后加的列
+#
+# 为什么需要它：db.create_all() 只在表【不存在】时建表，
+# 表已经存在时它什么都不做 —— 也就是说，别人机器上早就建好的
+# users 表不会因为模型里加了字段就自动长出新的列。
+# 症状会是"代码看着没问题，一注册就报 Unknown column"。
+#
+# 这里做的是一次幂等的 ALTER TABLE ADD COLUMN（已经有就跳过），
+# SQLite 和 MySQL 都支持这句。真正的生产项目会用 Alembic 之类的
+# 迁移工具，课程项目用这个够用，也省得让每个人手动改库。
+#
+# ⚠️ 注意：只做「加列」，不做改类型 / 删列 —— 那些操作有风险，
+#    需要人工确认。所以初始化 SQL（backend/init.sql）仍然是权威，
+#    新加的列建议同步补进去。
+# ---------------------------------------------------------------
+def _ensure_columns():
+    from sqlalchemy import inspect, text as sa_text
+
+    # 目前只有 users 表需要补。以后再加字段，往 WANTED 里加一行即可。
+    WANTED = {
+        "users": {
+            "security_question": "VARCHAR(64)",
+            "security_answer_hash": "VARCHAR(256)",
+        },
+    }
+
+    try:
+        inspector = inspect(db.engine)
+        existing_tables = set(inspector.get_table_names())
+    except Exception as e:  # 数据库连不上时不要在这里把服务带崩（后面调用自会报错）
+        print(f"[migrate] 读不到表结构，跳过补列：{e}")
+        return
+
+    for table, columns in WANTED.items():
+        if table not in existing_tables:
+            continue
+        have = {c["name"] for c in inspector.get_columns(table)}
+        for name, ddl in columns.items():
+            if name in have:
+                continue
+            try:
+                with db.engine.begin() as conn:
+                    conn.execute(sa_text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                print(f"[migrate] 已为 {table} 补上字段 {name}")
+            except Exception as e:
+                # 两个进程同时启动时会有一方 ALTER 失败，这属于正常竞争，忽略即可
+                print(f"[migrate] {table}.{name} 补列失败（可能已存在）：{e}")
