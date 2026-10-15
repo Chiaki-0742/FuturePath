@@ -42,7 +42,8 @@ chat_bp = Blueprint("chat", __name__, url_prefix="/api")
 # ---- 四个可调参数（放在文件顶部，改的时候不用满地找）----
 QUESTION_MAX = 500         # 问题长度上限。question 是 TEXT 列，不封顶会撞
                             # MySQL 严格模式 → DataError 1406 → 接口 500（踩过）
-DAILY_LIMIT = 20            # 每日提问次数上限，超了返回 1007（文档建议值）
+# 每日提问次数上限：不写死在这里了，改成从 .env 的 LLM_DAILY_LIMIT 读（默认 20），
+# 0 或负数 = 不限制。见下面的 _daily_limit()。超限时返回 1007。
 LOG_PAGE_SIZE = 20          # GET /chat/logs 默认返回条数
 LOG_MAX_SIZE = 50           # GET /chat/logs 上限，防一次拉太多
 
@@ -152,6 +153,32 @@ class LLMError(Exception):
       "AI 暂时不可用，请稍后再试" —— 你永远查不到真正的原因。
       只接住这一类，其余异常该 500 就 500，日志里能看到堆栈。
     """
+
+
+def _daily_limit():
+    """每人每天能问几次。返回 0 或负数 = 不限制。
+
+    ★ 为什么做成可配置，而不是写死一个模块级常量：
+      接口文档 3.6 节点名要求「每日提问次数上限」，验收表上也有这一项，
+      所以【默认值必须是 20】；但开发和演示时经常要连着问好几轮，
+      硬编码就得改代码、改完还得记得改回来。
+      现在只要在 backend/.env 里写 `LLM_DAILY_LIMIT=0` 就解开了 ——
+      只影响本机，仓库里的默认行为一点没变。
+    """
+    raw = current_app.config.get("LLM_DAILY_LIMIT")
+
+    # ⚠️ 这里千万不能写成 `raw or 20`。
+    #    0 是 falsy，会被 or 直接换成 20 —— 而 0 恰恰就是"不限制"的意思，
+    #    结果就是"配置里明明写了 0，页面上却还显示还能问 20 次"。
+    #    （2026-10-15 真踩过：改完配置测出来 remaining 还是 20。）
+    if raw is None or raw == "":
+        return 20
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        # 配置里填了不能转成整数的东西（比如中文），也不能让接口崩，
+        # 退回默认值继续按 20 次限制走
+        return 20
 
 
 def llm_config():
@@ -301,7 +328,11 @@ def _reserve_quota(user_id, question):
                     ChatLog.created_at >= start)
             .count())
 
-    if used >= DAILY_LIMIT:
+    # ---- 额度检查 ----
+    # limit <= 0 表示"不限制"（本机 .env 里把 LLM_DAILY_LIMIT 设成 0 了），
+    # 这时直接跳过检查，照常插占位记录。
+    limit = _daily_limit()
+    if limit > 0 and used >= limit:
         db.session.rollback()
         return None
 
@@ -433,9 +464,12 @@ def get_chat_logs():
 
     # used 字段告诉前端"今天还能问几次"，避免用户点了 20 次才被告知用完了。
     used = _today_count(user.id)
+    limit = _daily_limit()
     return ok({
         "list": [r.to_dict() for r in rows],
         "total": used,
-        "daily_limit": DAILY_LIMIT,
-        "remaining": max(0, DAILY_LIMIT - used),
+        # daily_limit = 0 表示不限制；此时 remaining 给 null，
+        # 前端据此显示"不限次数"，而不是算出一个负数或者 -20。
+        "daily_limit": max(0, limit),
+        "remaining": (max(0, limit - used) if limit > 0 else None),
     })

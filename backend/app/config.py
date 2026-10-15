@@ -20,3 +20,12 @@ class Config:
     LLM_API_KEY = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
     LLM_MODEL = os.getenv("LLM_MODEL", "")
+
+    # 每人每天能问几次；0 或负数 = 不限制。
+    # 为什么默认是 20：接口文档 3.6 节点名要求做「每日次数上限」（验收表上也有
+    # 打勾的一项），所以仓库里的默认行为必须保留它。
+    # 开发、调试、演示时如果嫌 20 次不够，在 backend/.env 里加一行
+    # LLM_DAILY_LIMIT=0 就解开了 —— 只影响本机，不会改掉别人的默认值。
+    # （这里的 `or "20"` 是安全的：环境变量读出来永远是字符串，
+    #   "0" 是非空字符串、不会被 or 吃掉；真正要小心的是下游把它当数字用的时候。）
+    LLM_DAILY_LIMIT = int(os.getenv("LLM_DAILY_LIMIT") or "20")
