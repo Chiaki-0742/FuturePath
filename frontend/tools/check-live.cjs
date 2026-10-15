@@ -395,6 +395,9 @@ const bail = (title, lines) => {
     ['#confirm', password],
     ['#name', realname],
     ['#major', major],
+    // 密保答案：2026-10-15 注册页新增的必填项。
+    // 密保【问题】不用管 —— 页面上默认已经选中第一题。
+    ['#security_answer', '自检答案'],
   ])
   await submit()
   await sleep(3200)

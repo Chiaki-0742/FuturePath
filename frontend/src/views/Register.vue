@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { SECURITY_QUESTIONS } from '@/utils/security'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -11,6 +12,10 @@ const formRef = ref(null)
 
 // 字段对齐后端 users 表：{username, password, name, major, grade}
 // 表里没有 email / phone，所以页面上也不收这两项。
+//
+// 密保问题（security_question / security_answer）是后加的，
+// 用途是「忘记密码时自助找回」—— 也是这个项目里唯一能找回账号的途径，
+// 因为我们没有收集邮箱和手机号，没有别的办法确认"你是你"。
 const form = reactive({
   username: '',
   password: '',
@@ -18,6 +23,12 @@ const form = reactive({
   name: '',
   major: '',
   grade: '大一',
+  // 默认为清单里的第一题。
+  // 为什么给默认值而不是留空：留空的话"问题"就成了一个必须主动去动的下拉，
+  // 忘记点开的人会直接被校验拦住、不知道哪里没填；给一个合理的默认值，
+  // 用户只要觉得不合适再改就行（找回密码时页面上会把这个问题原样显示出来）。
+  security_question: SECURITY_QUESTIONS[0],
+  security_answer: '',
 })
 
 const gradeOptions = ['大一', '大二', '大三', '大四', '研究生']
@@ -68,6 +79,20 @@ const rules = {
     { validator: notBlank, message: '请输入专业', trigger: 'blur' },
   ],
   grade: [{ required: true, message: '请选择年级', trigger: 'change' }],
+
+  // 密保问题：前端要求必填，但【后端是选填的】。
+  // 这么设计是因为后端那个接口还有别的调用方（自检脚本、截图脚本直接调
+  // POST /api/register 注册账号，不带这两个字段），后端强制必填会把它们全弄挂。
+  // 所以"必须填"这件事放在表单这一层，数据干净程度由后端把关。
+  security_question: [
+    { required: true, message: '请选择一个密保问题', trigger: 'change' },
+  ],
+  security_answer: [
+    { required: true, message: '请填写密保答案', trigger: 'blur' },
+    { validator: notBlank, message: '请填写密保答案', trigger: 'blur' },
+    // 长度规则要和后端 auth.py 的 SECURITY_ANSWER_MIN/MAX 对齐
+    { min: 2, max: 64, message: '答案长度需为 2~64 位', trigger: 'blur' },
+  ],
 }
 
 /** 自定义校验：两次密码必须一致 */
@@ -111,6 +136,10 @@ async function handleSubmit() {
       name: form.name.trim(),
       major: form.major.trim(),
       grade: form.grade,
+      // 密保答案去掉首尾空白再交上去（后端也会再归一化一次，
+      // 两边都做是为了"用户设置时怎么存"和"他找回时怎么答"能对上）
+      security_question: form.security_question,
+      security_answer: form.security_answer.trim(),
     })
 
     // 后端目前是返回 {token} 的（注册即登录）。
@@ -206,6 +235,28 @@ async function handleSubmit() {
           </el-select>
         </el-form-item>
 
+        <p class="form-note">
+          最后一项用于「忘记密码」时找回账号。我们没有收集邮箱和手机号，
+          所以这是唯一能自助找回的途径，答案请记牢（提交后就看不到了）。
+        </p>
+
+        <el-form-item label="密保问题" prop="security_question">
+          <el-select
+            v-model="form.security_question"
+            placeholder="选一个只有你知道答案的问题"
+          >
+            <el-option v-for="q in SECURITY_QUESTIONS" :key="q" :label="q" :value="q" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="密保答案" prop="security_answer">
+          <el-input
+            id="security_answer"
+            v-model="form.security_answer"
+            placeholder="答案不会展示出来，设完请自己记住"
+          />
+        </el-form-item>
+
         <el-button
           class="btn-submit"
           type="primary"
@@ -229,5 +280,17 @@ async function handleSubmit() {
   text-align: center;
   font-size: 13px;
   color: var(--text-2);
+}
+
+/* 密保那一段前面的说明。做成浅底提示条，和输入框区分开，
+   免得用户以为它也是一项要填的字段 */
+.form-note {
+  margin: 4px 0 18px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-weak);
+  color: #1f52d0;
+  font-size: 12px;
+  line-height: 1.7;
 }
 </style>

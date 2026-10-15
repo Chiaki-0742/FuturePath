@@ -113,7 +113,15 @@ function currentUsername() {
 //   前端两种都兼容（store 拿到 token 就登，没有就跳登录页并预填用户名）。
 //   这里先按"返回 token"模拟；若 C 确认不返回，把这行改成 return null，
 //   页面行为会自动变成"注册成功 → 跳登录页"，其他代码一行都不用动。
-export async function register({ username, password, name = '', major = '', grade = '' }) {
+export async function register({
+  username,
+  password,
+  name = '',
+  major = '',
+  grade = '',
+  security_question = '',
+  security_answer = '',
+}) {
   await sleep(DELAY)
 
   const users = readUsers()
@@ -128,6 +136,11 @@ export async function register({ username, password, name = '', major = '', grad
     name,
     major,
     grade,
+    // 密保问题。同样地，mock 才把答案明文存着 ——
+    // 真后端存的是哈希（见 backend/app/models/user.py），因为
+    // "妈妈的名字"这类答案一旦泄露，危害不比泄露密码小。
+    security_question,
+    security_answer,
   }
   writeUsers(users)
 
@@ -193,4 +206,75 @@ export async function updateInfo(payload) {
 export async function health() {
   await sleep(120)
   return { service: 'frontend-mock', status: 'ok' }
+}
+
+// ---------------------------------------------------------------
+// 密保问题（忘记密码）—— 对应真后端的 /api/security/*
+//
+// 报错文案和错误码的对应关系（前端只显示 msg，但保持一致便于排查）：
+//   "没设过密保" → 1008    "答案不对" → 1009    "凭证无效" → 1010
+// 和 api/security.js 的注释、后端 auth.py 三方对齐。
+// ---------------------------------------------------------------
+
+const RESET_PREFIX = 'mock-reset'
+
+/** 和 utils/security.js、后端 user.py 是同一套归一化规则 */
+function normAnswer(raw) {
+  return String(raw ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+export async function securityQuestion(username) {
+  await sleep(DELAY)
+  const user = readUsers()[username]
+  if (!user || !user.security_question || !user.security_answer) {
+    // ★ 和真后端一样：用户不存在 / 没设过密保，返回同一句话，
+    //   免得这个接口被用来试探"哪些用户名已被注册"。
+    throw new Error('这个账号没有设置密保问题，没法自助找回') // 1008
+  }
+  return { question: user.security_question }
+}
+
+export async function securityVerify(username, answer) {
+  await sleep(DELAY)
+
+  const user = readUsers()[username]
+  if (!user || !user.security_question || !user.security_answer) {
+    throw new Error('这个账号没有设置密保问题，没法自助找回') // 1008
+  }
+  if (normAnswer(user.security_answer) !== normAnswer(answer)) {
+    throw new Error('答案不对，请再想想') // 1009
+  }
+
+  // mock 的凭证直接把用户名编进去，重置那步就能反解出来 ——
+  // 真后端是一串随机字符 + 服务端内存里存着对应关系，实现不同、效果一样。
+  return {
+    reset_token: `${RESET_PREFIX}.${username}.${Date.now()}`,
+    expires_in: 600,
+  }
+}
+
+export async function securityReset(resetToken, newPassword) {
+  await sleep(DELAY)
+
+  const parts = String(resetToken || '').split('.')
+  if (parts[0] !== RESET_PREFIX || !parts[1]) {
+    throw new Error('重置凭证无效，请重新验证密保问题') // 1010
+  }
+
+  const users = readUsers()
+  const user = users[parts[1]]
+  if (!user) {
+    throw new Error('重置凭证无效，请重新验证密保问题') // 1010
+  }
+  if (String(newPassword || '').length < 6) {
+    throw new Error('密码长度需为6-64位') // 1002
+  }
+
+  user.password = newPassword
+  writeUsers(users)
+  return { username: user.username, kicked_sessions: 0 }
 }

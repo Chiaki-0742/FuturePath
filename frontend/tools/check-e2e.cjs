@@ -447,6 +447,10 @@ function bail(title, lines) {
     ['#confirm', 'abc123'],
     ['#name', '自检同学'],
     ['#major', '计算机科学与技术'],
+    // 密保答案：2026-10-15 注册页新增的必填项。
+    // 密保【问题】不用管 —— 页面上给了默认选中项，而 el-select 不是原生 select，
+    // 脚本又赋不了值，正好借这个默认值过去。
+    ['#security_answer', '自检答案'],
     // 年级不填：下拉框已经有默认值"大一"。
     // 而且 Element Plus 的 el-select 不是原生 <select>，直接赋值它是收不到的。
   ])
@@ -516,6 +520,7 @@ function bail(title, lines) {
     ['#confirm', 'xyz999'],
     ['#name', '自检同学'],
     ['#major', '计算机科学与技术'],
+    ['#security_answer', '自检答案'],
   ])
   await submit()
   await sleep(900)
@@ -539,6 +544,7 @@ function bail(title, lines) {
     ['#confirm', 'abc123'],
     ['#name', '自检同学'],
     ['#major', '计算机科学与技术'],
+    ['#security_answer', '自检答案'],
   ])
   await submit()
   await sleep(700)
@@ -559,6 +565,7 @@ function bail(title, lines) {
     ['#confirm', '123456'],
     ['#name', '重名同学'],
     ['#major', '软件工程'],
+    ['#security_answer', '自检答案'],
   ])
   await submit()
   await sleep(2200)
@@ -902,6 +909,107 @@ function bail(title, lines) {
   text = await bodyText()
   check(text.includes('登录后查看你的个人规划'), '被登录守卫拦回登录页')
   check(!text.includes('退出登录') && text.includes(APP_MARKER), '顶栏同步切换成未登录状态')
+
+  // ---------- 7. 忘记密码（密保问题） ----------
+  // 2026-10-15 新增的功能。这个项目里【没有邮箱、也没有手机号】，
+  // 所以密保问题是唯一能自助找回账号的途径 —— 必须有人守着它，
+  // 不然哪天改了注册页、把密保字段弄丢了，谁都不会发现，
+  // 等到演示那天有人真忘了密码才暴露。
+  section('【7】忘记密码：带密保注册 -> 答对 -> 重置 -> 用新密码登录')
+  const secUser = 'sec' + seed
+
+  await goto('/register')
+  await fill([
+    ['#username', secUser],
+    ['#password', 'oldpass123'],
+    ['#confirm', 'oldpass123'],
+    ['#name', '密保同学'],
+    ['#major', '软件工程'],
+    // 密保【问题】不用填：页面上默认就选中了第一题（el-select 不是原生
+    // select，脚本赋不了值，正好借这个默认值过去）
+    ['#security_answer', '王老师'],
+  ])
+  await submit()
+  await sleep(2600)
+  check((await currentHash()) === '#/survey', '填了密保的账号能注册成功')
+
+  // 退出登录 —— 模拟"真把密码忘了的人"：他连账号都进不去，只能从登录页出发
+  await logout()
+  await goto('/login', 2200)
+  const forgotEntry = await evaluate(
+    '!!Array.from(document.querySelectorAll("a")).find((a) => a.innerText.indexOf("忘记密码") >= 0)'
+  )
+  check(forgotEntry, '登录页上有「忘记密码？」入口（没有入口，功能等于藏起来了）')
+
+  await evaluate(
+    'Array.from(document.querySelectorAll("a")).find((a) => a.innerText.indexOf("忘记密码") >= 0).click()'
+  )
+  await sleep(1800)
+  check((await currentHash()).indexOf('forgot') >= 0, '点进去就是找回密码页')
+  text = await bodyText()
+  check(text.includes('填用户名') && text.includes('设新密码'), '页面上有步骤进度提示')
+
+  // 第一步：填用户名
+  await fill([['#username', secUser]])
+  await clickButton('下一步')
+  await sleep(1500)
+  const shownQ = await evaluate(
+    'document.querySelector(".question-box__text")?.innerText || ""'
+  )
+  check(shownQ.length > 0, '第二步把他自己设的那个问题显示出来了：' + shownQ)
+
+  // 故意答错：要有明确提示，而且不能把人卡在这一步
+  await fill([['#answer', '瞎猜一个']])
+  await clickButton('验证')
+  await sleep(1300)
+  text = await bodyText()
+  check(text.includes('答案不对'), '答错时给出明确提示')
+
+  // 答对（故意前后加空格，顺带验证答案容错）
+  await fill([['#answer', ' 王老师 ']])
+  await clickButton('验证')
+  await sleep(1300)
+  text = await bodyText()
+  check(
+    text.includes('设新密码') && text.includes('确认新密码'),
+    '答对后进入第三步，可以设新密码了'
+  )
+
+  // 第三步：两次不一致必须被拦下
+  await fill([
+    ['#newPassword', 'newpass456'],
+    ['#confirm', 'different999'],
+  ])
+  await clickButton('重设密码')
+  await sleep(900)
+  const confirmErrs = await fieldErrors()
+  check(confirmErrs.includes('两次输入的密码不一致'), '两次新密码不一致会被前端拦下')
+
+  await fill([
+    ['#newPassword', 'newpass456'],
+    ['#confirm', 'newpass456'],
+  ])
+  await clickButton('重设密码')
+  await sleep(1800)
+  text = await bodyText()
+  check(text.includes('已重置'), '密码重置成功')
+
+  // 回登录页验证：旧密码作废、新密码可用
+  await logout()
+  await goto('/login', 2200)
+  await fill([
+    ['#username', secUser],
+    ['#password', 'oldpass123'],
+  ])
+  await submit()
+  await sleep(1600)
+  text = await bodyText()
+  check(text.includes('用户名或密码错误'), '旧密码已经登不上了')
+
+  await fill([['#password', 'newpass456']])
+  await submit()
+  await sleep(2200)
+  check((await currentHash()) !== '#/login', '新密码能登录成功')
 
   // ---------- 汇总 ----------
   section('汇总')

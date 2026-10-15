@@ -38,6 +38,14 @@ const routes = [
     meta: { title: '注册' },
   },
   {
+    path: '/forgot-password',
+    name: 'forgot-password',
+    component: () => import('@/views/ForgotPassword.vue'),
+    // 注意这里是【免登录】的 —— 要找回密码的人，本来就是登不进来的，
+    // 加 requiresAuth 会直接把他挡在门外。
+    meta: { title: '找回密码' },
+  },
+  {
     path: '/survey',
     name: 'survey',
     component: () => import('@/views/Survey.vue'),
@@ -113,8 +121,16 @@ router.beforeEach((to) => {
   //
   // 登录页和注册页要排除掉：这两个页面本来就是"还没决定去哪"的状态，
   // 在这上面再加一层跳转，会绕一圈才到地方。
+  // 「找回密码」同理 —— 正常进这个页面的人一定是登录不上来的状态，
+  // 这里要是还判"你没填问卷"、把他送去问卷页，就等于把人堵死了。
   // ---------------------------------------------------------------
-  if (isLoggedIn && to.name !== 'survey' && to.name !== 'login' && to.name !== 'register') {
+  if (
+    isLoggedIn &&
+    to.name !== 'survey' &&
+    to.name !== 'login' &&
+    to.name !== 'register' &&
+    to.name !== 'forgot-password'
+  ) {
     const username = userStore.userInfo?.username || localUsername()
     if (username && !hasSurveyRecord(username)) {
       return { name: 'survey', query: { redirect: to.fullPath } }

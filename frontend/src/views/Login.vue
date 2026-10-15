@@ -111,6 +111,10 @@ async function handleSubmit() {
           />
         </el-form-item>
 
+        <p class="forgot-line">
+          <RouterLink to="/forgot-password">忘记密码？</RouterLink>
+        </p>
+
         <el-button class="btn-submit" type="primary" native-type="submit" :loading="loading">
           {{ loading ? '登录中…' : '登录' }}
         </el-button>
@@ -129,5 +133,13 @@ async function handleSubmit() {
   text-align: center;
   font-size: 13px;
   color: var(--text-2);
+}
+
+/* 「忘记密码？」贴在上一个输入框右下角 —— 这是登录页的习惯位置，
+   用户找不到密码时会先看这里 */
+.forgot-line {
+  margin: -8px 0 18px;
+  text-align: right;
+  font-size: 13px;
 }
 </style>
