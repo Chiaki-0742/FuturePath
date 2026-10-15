@@ -1,4 +1,6 @@
 """Flask 应用工厂：create_app() 创建并配置整个后端应用"""
+import os
+
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
@@ -16,8 +18,19 @@ def create_app():
     # 数据库初始化
     db.init_app(app)
 
-    # 允许跨域：前端(5173端口)才能正常请求后端(5000端口)
-    CORS(app)
+    # 允许跨域：前端(5173端口)才能正常请求后端(5000端口)。
+    # 默认 '*' —— 与改造前行为完全一致，组员的局域网联调不受任何影响。
+    # 正式部署时可以收紧：在 backend/.env 里设 CORS_ORIGINS（逗号分隔），例如
+    #   CORS_ORIGINS=http://1.2.3.4
+    # 注意：本项目同源部署（Nginx 反代 /api）时浏览器根本不发跨域请求，
+    # 这一项只在前后端分域名部署时才有意义。
+    _origins_env = (os.getenv("CORS_ORIGINS") or "*").strip()
+    cors_origins = (
+        "*"
+        if _origins_env == "*"
+        else [o.strip() for o in _origins_env.split(",") if o.strip()]
+    )
+    CORS(app, resources={r"/*": {"origins": cors_origins}})
 
     # 注册路由
     from app.routes.auth import auth_bp

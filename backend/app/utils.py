@@ -14,6 +14,13 @@ from flask import jsonify, request
 
 # 开发期用内存存 token（重启后端会失效，第二周换成更完善的方案）
 #   { token字符串 : username }
+#
+# ⚠️ 上线部署必须注意：这里是【进程内存】，不是多进程共享的存储。
+#    用 gunicorn 起多进程（-w 2 及以上）时，每个 worker 各持有一份 TOKENS，
+#    在 A worker 登录拿到的 token，请求轮到 B worker 就不认得 ——
+#    表现是"随机 401、刷新一下又好了"，极难排查。
+#    所以在换成 Redis／库表之前，gunicorn 必须 -w 1（要并发就加 --threads）。
+#    auth.py 里的 RESET_TOKENS（重置凭证）和连错锁定同理。
 TOKENS = {}
 
 

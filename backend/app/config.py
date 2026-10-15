@@ -14,8 +14,9 @@ class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
 
     # ---- 大模型配置（第三层 /api/chat 用）----
-    # 现在留空也不影响运行：chat.py 的骨架阶段不读它们，返回固定文案。
-    # 节后拿到 API key，填进 backend/.env（★ 不要填进这个文件，.env 才是本地私有的）
+    # 已接入智谱 GLM（见 routes/chat.py 的 call_real_model）。
+    # key 为空时自动降级为固定文案并返回 data.mock = true，所以留空也能跑通整条链路。
+    # ★ key 只填进 backend/.env，不要填进这个文件（.env 已进 .gitignore）
     LLM_API_KEY = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
     LLM_MODEL = os.getenv("LLM_MODEL", "")
