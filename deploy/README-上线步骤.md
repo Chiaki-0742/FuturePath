@@ -61,6 +61,35 @@ curl -sSO https://download.bt.cn/install/install_panel.sh && bash install_panel.
 
 ---
 
+## ★ 快速通道（推荐）：一个包 + 一条命令
+
+不想一步步点就照这个来，全程 5 分钟：
+
+1. 准备 `futurepath-online.zip`（0.6 MB）。它已经打包好：后端代码、**带种子数据的 dev.db**
+   （9 道题 / 18 个案例）、前端构建产物 `dist/`、以及下面那个部署脚本。
+2. 宝塔「文件」→ 进入 `/www/wwwroot/` → 新建目录 `futurepath` → 进去 →
+   上传这个 zip → 右键「解压」（解压到当前目录）→ 确认里面有 `backend / dist / deploy` 三个文件夹。
+3. 宝塔「终端」里粘贴这一行回车：
+
+   ```bash
+   bash /www/wwwroot/futurepath/deploy/setup-server.sh
+   ```
+
+4. 阿里云控制台 → 这台服务器 → 「防火墙」→ 添加规则 **TCP 8080**。
+5. 浏览器打开 `http://公网IP:8080`。
+
+脚本自动做完这些：找/装 Python 3.9+、建虚拟环境装依赖、生成 `backend/.env`（随机密钥）、
+用 systemd 守护 gunicorn、装并配置 Nginx（监听 8080、`/api` 反代）、系统防火墙放行、最后自检。
+
+可以重复跑，做过的步骤会跳过，不会覆盖已存在的 `.env`。
+
+> 唯一的遗留：`.env` 里 `LLM_API_KEY` 是空的，所以对话页会显示"演示模式"（固定文案）。
+> 填上 key 后执行 `systemctl restart futurepath` 就是真回答了。
+
+下面是**手动版**，想知道每一步到底在干什么、或者脚本某步失败要单独补的时候看。
+
+---
+
 ## 二、服务器上要装什么
 
 买完等 1~2 分钟初始化，然后去控制台拿面板账号：
