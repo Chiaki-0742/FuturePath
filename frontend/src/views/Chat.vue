@@ -30,8 +30,8 @@ const thinking = ref(false)
 const loading = ref(true)
 const errorTip = ref('')
 const needSurvey = ref(false)   // 收到 1005 后置为 true，页面换成引导
-const remaining = ref(null)     // 今天还能问几次；null = 还没问过后端，不知道
-const dailyLimit = ref(20)
+const remaining = ref(null)     // 还能问几次；null = 不知道，或"不限制"（看 dailyLimit）
+const dailyLimit = ref(0)       // 0 = 不限制（后端 .env 里把上限关掉了）
 const streamEl = ref(null)
 
 const examples = [
@@ -87,12 +87,14 @@ async function loadLogs() {
   const data = await fetchChatLogs(20)
   if (!data) return
 
-  if (typeof data.daily_limit === 'number' && data.daily_limit > 0) {
+  // 注意这里【不能】写成 `daily_limit > 0 才赋值` ——
+  // 后端返回 0 的意思是"不限制"，那正是我们最需要知道的信息；
+  // 加了这个判断就会把 0 忽略掉，页面上继续显示上一次的"还能问 20 次"。
+  if (typeof data.daily_limit === 'number') {
     dailyLimit.value = data.daily_limit
   }
-  if (typeof data.remaining === 'number') {
-    remaining.value = data.remaining
-  }
+  // remaining 可能是 null：要么是"还没问到后端"，要么是"不限制"
+  remaining.value = typeof data.remaining === 'number' ? data.remaining : null
 
   const list = Array.isArray(data.list) ? data.list.slice().reverse() : []
   const built = []
@@ -194,12 +196,18 @@ function useExample(text) {
 
     <div class="card chat">
       <div class="chat__bar">
-        <span class="quota">
-          今天还能问
-          <b>{{ remaining === null ? '—' : remaining }}</b>
-          次
-        </span>
-        <span class="muted">每人每天最多 {{ dailyLimit }} 次</span>
+        <template v-if="dailyLimit > 0">
+          <span class="quota">
+            今天还能问
+            <b>{{ remaining === null ? '—' : remaining }}</b>
+            次
+          </span>
+          <span class="muted">每人每天最多 {{ dailyLimit }} 次</span>
+        </template>
+        <template v-else>
+          <span class="quota">不限提问次数</span>
+          <span class="muted">每次提问都会真实消耗 token，注意别刷</span>
+        </template>
       </div>
 
       <div ref="streamEl" class="stream">

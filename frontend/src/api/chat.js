@@ -86,7 +86,7 @@ function mockAsk(question) {
   if (!record || record.skipped) {
     return fail(1005, '请先完成问卷，我才能针对你的情况回答')
   }
-  if (logs.length >= DAILY_LIMIT) {
+  if (DAILY_LIMIT > 0 && logs.length >= DAILY_LIMIT) {
     return fail(1007, '今日提问次数已用完，明天再来')
   }
 
@@ -103,7 +103,8 @@ function mockLogs(limit) {
   return {
     list,
     total: used,
-    daily_limit: DAILY_LIMIT,
-    remaining: Math.max(0, DAILY_LIMIT - used),
+    daily_limit: Math.max(0, DAILY_LIMIT),
+    // daily_limit = 0 表示不限制 → remaining 给 null（和后端返回的形状保持一致）
+    remaining: DAILY_LIMIT > 0 ? Math.max(0, DAILY_LIMIT - used) : null,
   }
 }

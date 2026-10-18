@@ -17,11 +17,15 @@ import { readSurvey } from './survey'
 const KEY_PREFIX = 'plan_chat_'
 
 /**
- * 每日提问次数上限。
- * ⚠️ 这个数字必须和后端 chat.py 里的 DAILY_LIMIT 保持一致（现在都是 20）。
- * 改后端的时候记得回来改这里，否则 mock 模式下的"还能问几次"会和真接口对不上。
+ * 每日提问次数上限；**0 = 不限制**。
+ *
+ * ⚠️ 它只在 Mock 模式（不连后端）下起作用 ——
+ *    连真后端时，页面用的是接口返回的 daily_limit / remaining，这里的值不参与判断。
+ *    所以改限制要改两处：后端 backend/.env 的 LLM_DAILY_LIMIT（真接口用）
+ *    和这里（没后端时用），否则两边显示会不一致。
+ *    现在两处都是 0（不限制）。
  */
-export const DAILY_LIMIT = 20
+export const DAILY_LIMIT = 0
 
 /** 每个账号存一份，key 里带用户名 —— 一台电脑上常会注册好几个账号 */
 export function chatKey(username) {
