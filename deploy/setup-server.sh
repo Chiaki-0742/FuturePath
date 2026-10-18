@@ -159,20 +159,31 @@ elif [ -x /www/server/nginx/sbin/nginx ]; then
     warn "用的是宝塔自带的 nginx"
 else
     echo "  系统里没有 nginx，现在装"
-    (dnf install -y nginx 2>/dev/null || yum install -y nginx 2>/dev/null) || true
+    # Alinux 3 上 dnf 经常报 "All matches were filtered out by exclude filtering for argument: nginx"，
+    # 这是仓库/模块过滤把候选全挡掉了，不是仓库里没有这个包。所以多试几招再放弃。
+    (dnf install -y nginx 2>/dev/null) \
+        || (dnf install -y --disableexcludes=all nginx 2>/dev/null) \
+        || { dnf module enable nginx:main -y >/dev/null 2>&1 && dnf install -y nginx 2>/dev/null; } \
+        || true
     if command -v nginx >/dev/null 2>&1; then
         NGINX_BIN="$(command -v nginx)"
     elif [ -x /www/server/nginx/sbin/nginx ]; then
         NGINX_BIN="/www/server/nginx/sbin/nginx"
     else
-        fail "nginx 装不上。到宝塔「软件商店」装一个 Nginx，再重跑本脚本"
+        fail "nginx 装不上（dnf 被仓库过滤挡掉了）。去宝塔「软件商店」搜 Nginx 点安装，装完再重跑本脚本即可"
     fi
 fi
 echo "  使用 $NGINX_BIN"
 
 CONF_DIR=/etc/nginx/conf.d
-[ "$NGINX_BIN" = "/www/server/nginx/sbin/nginx" ] && CONF_DIR=/www/server/panel/vhost/nginx
-mkdir -p "$CONF_DIR"
+LOG_DIR=/var/log/nginx
+if [ "$NGINX_BIN" = "/www/server/nginx/sbin/nginx" ]; then
+    # 宝塔的 nginx 把站点配置和日志放在自己的目录里；
+    # 如果还往 /var/log/nginx 写，那个目录常常不存在，nginx -t 会直接报 open() failed
+    CONF_DIR=/www/server/panel/vhost/nginx
+    LOG_DIR=/www/wwwlogs
+fi
+mkdir -p "$CONF_DIR" "$LOG_DIR"
 
 cat > "$CONF_DIR/futurepath.conf" <<EOF
 server {
@@ -204,8 +215,8 @@ server {
 
     location ~ /\.(env|git) { deny all; }
 
-    access_log /var/log/nginx/futurepath.access.log;
-    error_log  /var/log/nginx/futurepath.error.log;
+    access_log $LOG_DIR/futurepath.access.log;
+    error_log  $LOG_DIR/futurepath.error.log;
 }
 EOF
 echo "  已写 $CONF_DIR/futurepath.conf"

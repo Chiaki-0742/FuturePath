@@ -274,6 +274,8 @@ npm run build
 | 用一会儿就掉登录 | 起了多个 worker | `workers` 必须是 **1**，理由见配置文件注释 |
 | 8080 打不开 | 端口没放行 | 宝塔「安全」和云控制台「防火墙」两边都要放行 |
 | 提示要备案 | 用了域名 + 80 端口 | 换回 `IP:8080`，或去备案 |
+| 脚本停在 5/6，报 `All matches were filtered out by exclude filtering for argument: nginx` | 系统的 dnf 仓库把 nginx 过滤掉了（不是没这个包） | 宝塔「软件商店」搜 **Nginx** 点安装，装完**重跑脚本**——脚本会自动改用宝塔自带的 nginx |
+| 重跑脚本报 `nginx -t` 失败，`open() "/var/log/nginx/..." failed` | 用宝塔 nginx 时日志目录不存在 | 先 `sudo mkdir -p /var/log/nginx` 再重跑（新版脚本已自动改用 `/www/wwwlogs`） |
 
 ---
 
