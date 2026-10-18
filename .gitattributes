@@ -1,0 +1,7 @@
+# 换行符约定：Windows 上 git 默认会把文本转成 CRLF 检出，
+# 而 .sh / .conf 一旦带 CRLF 传到 Linux，bash 会报
+#   "$'\r': command not found"
+# 这种错误看起来像脚本语法错，其实是换行符，极难自行想到。
+# 所以这两个后缀强制走 LF。
+*.sh   text eol=lf
+*.conf text eol=lf
