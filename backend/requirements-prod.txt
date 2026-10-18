@@ -1,0 +1,12 @@
+# 上线专用依赖（本地开发不用装这个文件）
+#
+# 为什么不直接写进 requirements.txt：
+#   gunicorn 只能在 Linux/macOS 上跑，Windows 装不上也用不了。
+#   组里三个人本地都是 Windows，如果塞进主清单，
+#   他们一执行 pip install -r requirements.txt 就报错。
+#
+# 服务器上装依赖时用这个：
+#   pip install -r requirements-prod.txt
+
+-r requirements.txt
+gunicorn==23.0.0
