@@ -29,7 +29,9 @@ info() { echo -e "\n\033[32m[$(date +%H:%M:%S)] $*\033[0m"; }
 warn() { echo -e "\033[33m[注意] $*\033[0m"; }
 fail() { echo -e "\033[31m[失败] $*\033[0m"; exit 1; }
 
-[ "$(id -u)" = "0" ] || fail "请用 root 身份运行（宝塔终端默认就是 root）"
+# 注意：阿里云自带的宝塔镜像里，远程终端的默认用户是 admin 而不是 root，
+# 直接 `bash xxx.sh` 会在这里被拦下来。加 sudo 即可。
+[ "$(id -u)" = "0" ] || fail "需要 root 权限。请在前面加 sudo 再跑：sudo bash $0"
 [ -d "$BACKEND" ] || fail "找不到 $BACKEND —— 代码还没解压到 /www/wwwroot/futurepath 吧？"
 
 # --------------------------------------------------------------

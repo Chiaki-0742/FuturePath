@@ -69,11 +69,15 @@ curl -sSO https://download.bt.cn/install/install_panel.sh && bash install_panel.
    （9 道题 / 18 个案例）、前端构建产物 `dist/`、以及下面那个部署脚本。
 2. 宝塔「文件」→ 进入 `/www/wwwroot/` → 新建目录 `futurepath` → 进去 →
    上传这个 zip → 右键「解压」（解压到当前目录）→ 确认里面有 `backend / dist / deploy` 三个文件夹。
-3. 宝塔「终端」里粘贴这一行回车：
+3. 宝塔「终端」里粘贴这一行回车（**前面一定要带 `sudo`**：阿里云宝塔镜像的终端
+   默认登录用户是 `admin`，不是 `root`，不加会报"需要 root 权限"）：
 
    ```bash
-   bash /www/wwwroot/futurepath/deploy/setup-server.sh
+   sudo bash /www/wwwroot/futurepath/deploy/setup-server.sh
    ```
+
+   > 「`No such file or directory`」= 文件没上传成功或解压到了别处，不是脚本坏了。
+   > 先用 `sudo find /www -maxdepth 4 -name setup-server.sh` 确认它到底在哪。
 
 4. 阿里云控制台 → 这台服务器 → 「防火墙」→ 添加规则 **TCP 8080**。
 5. 浏览器打开 `http://公网IP:8080`。
@@ -83,8 +87,8 @@ curl -sSO https://download.bt.cn/install/install_panel.sh && bash install_panel.
 
 可以重复跑，做过的步骤会跳过，不会覆盖已存在的 `.env`。
 
-> 唯一的遗留：`.env` 里 `LLM_API_KEY` 是空的，所以对话页会显示"演示模式"（固定文案）。
-> 填上 key 后执行 `systemctl restart futurepath` 就是真回答了。
+> 关于大模型：如果 `backend/.env` 里的 `LLM_API_KEY` 是空的，对话页会退化成"演示模式"
+> （固定文案）。填上自己的 key 后执行 `sudo systemctl restart futurepath` 就是真回答了。
 
 下面是**手动版**，想知道每一步到底在干什么、或者脚本某步失败要单独补的时候看。
 
