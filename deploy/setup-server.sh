@@ -152,11 +152,17 @@ echo "$HEALTH" | grep -q '"status"' || warn "健康检查没返回预期内容�
 info "5/6 配置 Nginx（监听 $PORT_WEB）"
 
 NGINX_BIN=""
-if command -v nginx >/dev/null 2>&1; then
-    NGINX_BIN="$(command -v nginx)"
-elif [ -x /www/server/nginx/sbin/nginx ]; then
-    NGINX_BIN="/www/server/nginx/sbin/nginx"
+BT_NGINX=/www/server/nginx/sbin/nginx
+
+# ⚠️ 判断顺序不能反。宝塔装完 nginx 会在 /bin/nginx 建一个软链指向自己的二进制，
+#    如果先跑 `command -v nginx`，拿到的是 /bin/nginx，于是被误判成"系统 nginx"，
+#    接着用 systemctl 去启停一个由宝塔托管的进程 —— 必然 `Job for nginx.service failed`。
+#    （2026-10-19 真踩过，配置写得没错，纯粹是认错了 nginx。）
+if [ -x "$BT_NGINX" ]; then
+    NGINX_BIN="$BT_NGINX"
     warn "用的是宝塔自带的 nginx"
+elif command -v nginx >/dev/null 2>&1; then
+    NGINX_BIN="$(command -v nginx)"
 else
     echo "  系统里没有 nginx，现在装"
     # Alinux 3 上 dnf 经常报 "All matches were filtered out by exclude filtering for argument: nginx"，
@@ -165,10 +171,11 @@ else
         || (dnf install -y --disableexcludes=all nginx 2>/dev/null) \
         || { dnf module enable nginx:main -y >/dev/null 2>&1 && dnf install -y nginx 2>/dev/null; } \
         || true
-    if command -v nginx >/dev/null 2>&1; then
+    if [ -x "$BT_NGINX" ]; then
+        NGINX_BIN="$BT_NGINX"
+        warn "用的是宝塔自带的 nginx"
+    elif command -v nginx >/dev/null 2>&1; then
         NGINX_BIN="$(command -v nginx)"
-    elif [ -x /www/server/nginx/sbin/nginx ]; then
-        NGINX_BIN="/www/server/nginx/sbin/nginx"
     else
         fail "nginx 装不上（dnf 被仓库过滤挡掉了）。去宝塔「软件商店」搜 Nginx 点安装，装完再重跑本脚本即可"
     fi
@@ -177,11 +184,13 @@ echo "  使用 $NGINX_BIN"
 
 CONF_DIR=/etc/nginx/conf.d
 LOG_DIR=/var/log/nginx
-if [ "$NGINX_BIN" = "/www/server/nginx/sbin/nginx" ]; then
+if [ "$NGINX_BIN" = "$BT_NGINX" ]; then
     # 宝塔的 nginx 把站点配置和日志放在自己的目录里；
     # 如果还往 /var/log/nginx 写，那个目录常常不存在，nginx -t 会直接报 open() failed
     CONF_DIR=/www/server/panel/vhost/nginx
     LOG_DIR=/www/wwwlogs
+    # 清掉上一版脚本误写到系统目录里的那份，避免以后装系统 nginx 时 8080 冲突
+    rm -f /etc/nginx/conf.d/futurepath.conf 2>/dev/null || true
 fi
 mkdir -p "$CONF_DIR" "$LOG_DIR"
 
@@ -230,8 +239,17 @@ fi
 "$NGINX_BIN" -t || fail "nginx 配置检查没过，把上面的报错发出来"
 
 # 宝塔自带的 nginx 用 bt 管理，系统装的用 systemctl
-if [ "$NGINX_BIN" = "/www/server/nginx/sbin/nginx" ]; then
-    "$NGINX_BIN" -s reload 2>/dev/null || "$NGINX_BIN"
+if [ "$NGINX_BIN" = "$BT_NGINX" ]; then
+    # 宝塔的 nginx 由 /etc/init.d/nginx 托管，系统里那个 nginx.service 管不了它
+    if [ -x /etc/init.d/nginx ]; then
+        /etc/init.d/nginx reload >/dev/null 2>&1 || /etc/init.d/nginx start >/dev/null 2>&1 || true
+    else
+        "$NGINX_BIN" -s reload >/dev/null 2>&1 || "$NGINX_BIN" >/dev/null 2>&1 || true
+    fi
+    sleep 1
+    if ! "$NGINX_BIN" -s reload >/dev/null 2>&1 && ! pgrep -f "nginx: master" >/dev/null 2>&1; then
+        fail "宝塔的 nginx 起不来。到宝塔「软件商店 → Nginx → 服务」点一下「启动」，再重跑本脚本"
+    fi
 else
     systemctl enable nginx >/dev/null 2>&1
     systemctl restart nginx || fail "nginx 起不来"
